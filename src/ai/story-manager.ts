@@ -13,6 +13,7 @@ export interface SceneSuggestion {
   action?: string;
   emotion?: "neutral" | "happy" | "sad" | "angry" | "surprised" | "nervous";
   poseId?: number;
+  speechBubbleId?: number;
   memory?: string[];
 }
 
@@ -31,6 +32,7 @@ export interface StoryManagerOptions {
 }
 
 export class StoryManager {
+  private static readonly transcriptWindow = 15;
   private keyPoints: string[] = [];
   private keyPointIndex = 0;
   private lastSpokenAt = new Map<number, number>();
@@ -48,8 +50,8 @@ export class StoryManager {
     this.genai = options.genai ?? null;
   }
 
-  public getLast20Messages(): Array<{ speakerId?: number; speakerName: string; speakerState?:CharacterState; text: string; }> {
-    return this.speechLog.slice(-20);
+  public getRecentMessages(limit: number = StoryManager.transcriptWindow): Array<{ speakerId?: number; speakerName: string; speakerState?:CharacterState; text: string; }> {
+    return this.speechLog.slice(-limit);
   }
 
   public logSpeech(speakerId: number | undefined, speakerName: string, text: string, speakerState?:CharacterState): void {
@@ -60,7 +62,7 @@ export class StoryManager {
   }
 
   public buildSpeechLogTranscript(roleLookup?: Map<string, string>): string | null {
-    const entries = this.getLast20Messages();
+    const entries = this.getRecentMessages();
     if (!entries.length) {
       return null;
     }
@@ -210,7 +212,7 @@ export class StoryManager {
   ): Promise<SpeakerCandidate | undefined> {
     const characterDetails = candidates.map((c, i) => {
       const memories = context.characterMemories?.get(c.id);
-      const memoryStr = memories?.length ? ` (remembers: ${memories.slice(-2).map(m => m.entry).join("; ")})` : "";
+      const memoryStr = memories?.length ? ` (remembers: ${memories.slice(-5).map(m => m.entry).join("; ")})` : "";
       return `${i + 1}. ${c.username} (id: ${c.id})${memoryStr}`;
     }).join("\n");
 
@@ -219,13 +221,15 @@ export class StoryManager {
     const transcriptBlock = transcript ? `Recent transcript:\n${transcript}` : "";
 
     const prompt = [
-      `Story: ${context.storyPrompt ?? "Ace Attorney trial"}`,
+      `Conversation setup: ${context.storyPrompt ?? "casual character chat with light Ace Attorney flavor"}`,
       context.evidences?.length ? `Evidence: ${context.evidences.map((e) => e.name).join(", ")}` : "",
       context.lastSpeakerName ? `Last speaker: ${context.lastSpeakerName}` : "",
       `Last message: "${context.lastMsg ?? ""}"`,
       transcriptBlock,
-      "\nWho should speak next to continue the trial naturally?",
-      "Consider: continuation needs, natural flow, courtroom dynamics, character memories.",
+      "\nWho should speak next to keep the conversation lively and natural?",
+      "Prefer the character with the strongest reason to answer, react, joke, challenge, deflect, interrupt, or escalate based on the latest line and recent transcript.",
+      "Consider: conversational momentum, direct address, tension, personality contrast, and character memories.",
+      "NO EMOJIS.",
       "set speakerId to the id of the chosen character, or null to skip and let player speak. Briefly explain your choice in the reason field.",
       `\nAvailable characters:\n${characterDetails}`
     ].filter(Boolean).join("\n");

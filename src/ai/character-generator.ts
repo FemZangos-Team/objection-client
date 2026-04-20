@@ -11,7 +11,8 @@ interface GeneratedCharacter {
 
 export async function generateTrialCharacters(
   genai: GenAIClient | null,
-  storyline:string
+  storyline:string,
+  defenseName: string = "Defense"
 ): Promise<CharacterProfile[]> {
   const fallback = getFallbackCharacters();
 
@@ -20,7 +21,7 @@ export async function generateTrialCharacters(
   }
 
   try {
-    const prompt = buildPrompt(storyline);
+    const prompt = buildPrompt(storyline, defenseName);
     const schema = buildSchema();
     const parsed = await genai.generateJson<GeneratedCharacter[]>(prompt, schema);
     if (!Array.isArray(parsed) || parsed.length === 0) {
@@ -40,20 +41,22 @@ export async function generateTrialCharacters(
   }
 }
 
-function buildPrompt(storyline: string): string {
+function buildPrompt(storyline: string, defenseName: string): string {
   return [
-    "Generate characters for an Ace Attorney trial. Required roles:\n",
+    "Generate characters for a live casual conversation with light Ace Attorney flavor. Required roles:\n",
     "1. Prosecutor: Name MUST be 'Miles Edgeworth' (characterId 2)\n",
     "2. Judge: (characterId 10)\n",
     "3-4. At least TWO witnesses with ' - Wt' suffix (use different witness characterIds from the list below)\n",
     "5. Defendant with ' - Df' suffix (use a witness characterId)\n",
     "Optional: One extra character (witness or defendant) who is secretly disguised/suspicious to add intrigue.\n",
-    "\nIMPORTANT: Witnesses and defendants should have interesting personalities and motivations that make them want to speak during the trial!",
-    "\nDO NOT generate character for player (Defense Attorney, Phoenix Wright).\n",
-    "Tone: Ace Attorney-inspired.\n",
+    "\nIMPORTANT: Every non-player character should have a distinct speaking style, opinion, and reason to keep replying in conversation.",
+    "Give them hooks for banter, defensiveness, gossip, teasing, awkwardness, rumors, interruptions, or suspicion instead of just dry testimony.",
+    "NO EMOJIS.\n",
+    `\nDO NOT generate character for player (Defense Attorney, ${defenseName}).\n`,
+    "Tone: casual and chatty first, with only light Ace Attorney flavor.\n",
     "Possible witness/defendant characterIds: " + Character.getPossibleWitnessIds().slice(0, 20).join(", ") + "... (assign unique IDs, no repeats)\n\n",
     
-    "Storyline: " +
+    "Conversation setup: " +
     storyline
   ].join("\n");
 }
@@ -69,7 +72,7 @@ function buildSchema(): JsonSchema {
         name: { type: "string" },
         description: {
           type: "string",
-          description: "Describe the character's personality, motivations, and role, alibi (what they were doing) in the trial. Max 3 paragraphs.",
+          description: "Describe the character's personality, conversational style, agenda, and what they are trying to push, hide, or gossip about in the room. Max 3 paragraphs.",
           maxLength: 314,
         },
         role: {

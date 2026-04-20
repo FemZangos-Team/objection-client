@@ -54,6 +54,7 @@ export interface CaseManagerOptions {
 type CharacterSide = CharacterData["side"];
 
 export class CaseManager {
+  private static readonly contextWindow = 15;
   private genai: GenAIClient | null;
   private storyManager: StoryManager;
   private storyPrompt = "";
@@ -61,7 +62,7 @@ export class CaseManager {
   private characters = new Map<number, CharacterManager>();
   private masterSocket: CourtroomWebSocketClient | null = null;
   private usedCharacterIds = new Set<number>();
-  private readonly disallowedCharacterIds = new Set<number>([1]); // Phoenix Wright preset
+  private readonly disallowedCharacterIds = new Set<number>([1]); // reserved defense-player preset
 
   constructor(options: CaseManagerOptions = {}) {
     this.genai = options.genai ?? null;
@@ -131,7 +132,7 @@ export class CaseManager {
     // Gather character memories
     const characterMemories = new Map<number, Array<{ entry: string }>>();
     this.characters.forEach((char) => {
-      characterMemories.set(char.id, char.getMemory(5));
+      characterMemories.set(char.id, char.getMemory(CaseManager.contextWindow));
     });
 
     const speaker = options.forcedSpeakerId !== undefined
@@ -219,7 +220,7 @@ export class CaseManager {
     // Include memories from all characters for context
     const allMemories: string[] = [];
     this.characters.forEach((char) => {
-      const memories = char.getMemory(3);
+      const memories = char.getMemory(CaseManager.contextWindow);
       if (memories.length > 0) {
         allMemories.push(`${char.name}: ${memories.map(m => m.entry).join("; ")}`);
       }
@@ -236,7 +237,7 @@ export class CaseManager {
     const transcriptBlock = transcript ? `Recent transcript:\n${transcript}` : "";
 
     return [
-      `Story: ${this.storyPrompt}`,
+      `Conversation setup: ${this.storyPrompt}`,
       keyPoints.length ? `Key points: ${keyPoints.join(" | ")}` : "",
       evidenceTitles,
       memoriesContext,
@@ -245,7 +246,8 @@ export class CaseManager {
       options.lastSpeakerState ? `Last speaker pose: ${options.lastSpeakerState.poseId}, mood: ${options.lastSpeakerState.mood}` : "",
       `Last message: "${options.lastMsg}"`,
       messageCountLine,
-      "Reply in <=25 words, courtroom tone. Keep dialogue flowing - other characters will continue the exchange."
+      "Use the recent transcript and memories as ongoing context. If available, remember at least the last 15 messages instead of responding only to the latest line.",
+      "Reply in <=25 words. Stay in character, answer or react directly, and keep the exchange casual and conversational instead of roleplaying a formal courtroom scene. NO EMOJIS."
     ]
       .filter(Boolean)
       .join("\n");
@@ -274,20 +276,6 @@ export class CaseManager {
     const preferredSide = this.resolveCharacterSide(profile.role);
 
     if (profile.characterId) {
-      if (this.disallowedCharacterIds.has(profile.characterId)) {
-        const reassignedId = this.pickUnusedCharacterId(preferredSide ?? undefined);
-        const characterData = Character.getCharacterData(reassignedId);
-        if (!characterData) {
-          throw new Error(`Character preset ${reassignedId} not found in cache.`);
-        }
-
-        return {
-          ...profile,
-          characterId: reassignedId,
-          initialPoseId: profile.initialPoseId ?? characterData.poses?.[0]?.id,
-        };
-      }
-
       this.usedCharacterIds.add(profile.characterId);
       return profile;
     }

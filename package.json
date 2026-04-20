@@ -4,20 +4,39 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "concurrently": "^9.2.1",
+    "electron": "^36.9.5",
+    "tsx": "^4.21.0",
+    "vite": "^7.3.2",
+    "wait-on": "^8.0.5"
   },
   "scripts": {
     "start": "bun run ./index.ts",
     "build": "bun run build:lin_x86 && bun run build:win",
     "build:lin_x86": "bun build ./index.ts --compile --target=bun-linux-x64-baseline --outfile objection-ai",
-    "build:win": "bun build ./index.ts --compile --target=bun-windows-x64-baseline --outfile objection-ai"
+    "build:win": "bun build ./index.ts --compile --target=bun-windows-x64-baseline --outfile objection-ai",
+    "desktop:dev": "concurrently -k \"vite --config gui/vite.config.mjs\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs\"",
+    "desktop:build": "vite build --config gui/vite.config.mjs",
+    "desktop:start": "electron electron/main.mjs",
+    "typecheck": "./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/tsc -p gui/tsconfig.json --noEmit"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^7.3.10",
+    "@mui/material": "^7.3.10",
     "axios": "^1.13.5",
     "chalk": "^5.6.2",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "socket.io-client": "^4.8.3"
   }
 }

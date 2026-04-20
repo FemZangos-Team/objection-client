@@ -1,19 +1,20 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { DEFAULTS } from "./app-defaults.js";
 
-const DEFAULTS = {
-    roomId: undefined,
-    roomPass: undefined,
-    inworldKey: "RjVOMjBkb0RIZHhIZ3AzZ3hPVmRVMlhCemFrakJmTnk6VVZ4SG5vY3pwMXIyUWpjVWcxNlc4VDh0N0doRUtQZmdwb25OeUZCZFRqRlByNGhXVzRKWXZJYWhGTFczOWVvNw==",
-    prompt: `
-    Be funny, but try to make sense. Create a never seen storyline for a murder
-    case in Ace Attorney.
-`,
-    playerUsername: "eduapps",
-    maxAiMessages: 4,
-    inworldModel: "xai/grok-4-1-fast-non-reasoning-latest",
-};
+function parseJsonEnv<T>(value: string | undefined, fallback: T): T {
+    if (!value) {
+        return fallback;
+    }
+
+    try {
+        return JSON.parse(value) as T;
+    } catch (error) {
+        console.warn(`${colors.yellow}Warning:${colors.reset} Failed to parse JSON env value:`, error);
+        return fallback;
+    }
+}
 
 function printHelp(): void {
     const helpText = `
@@ -192,6 +193,16 @@ const CONFIG = {
     maxAiMessages: Number(finalConfig["max-ai-messages"]) || DEFAULTS.maxAiMessages,
     inworldKey: (finalConfig["inworld-key"] as string) || (finalConfig["gemini-key"] as string) || process.env.INWORLD_API_KEY || process.env.GEMINI_KEY || DEFAULTS.inworldKey,
     inworldModel: (finalConfig["inworld-model"] as string) || (finalConfig["gemini-model"] as string) || DEFAULTS.inworldModel,
+    customCharacterIds: parseJsonEnv<number[]>(process.env.OBJECTION_CUSTOM_CHARACTER_IDS, DEFAULTS.customCharacterIds),
+    castOverrides: parseJsonEnv<Array<{
+        slotId: string;
+        role: string;
+        occurrence: number;
+        characterId?: number;
+        remove?: boolean;
+        nameOverride?: string;
+        descriptionOverride?: string;
+    }>>(process.env.OBJECTION_CAST_OVERRIDES, DEFAULTS.castOverrides),
 };
 
 export { CONFIG, DEFAULTS };

@@ -13,6 +13,17 @@ export interface CharacterPose {
     poseStates: any[];
 }
 
+export interface CharacterSpeechBubble {
+    id: number;
+    name: string;
+    imageUrl: string;
+    soundUrl: string;
+    shake: boolean;
+    fullscreen: boolean;
+    duration: number;
+    order: number;
+}
+
 export interface CharacterData {
     id: number;
     isPreset: boolean;
@@ -30,6 +41,7 @@ export interface CharacterData {
     offsetY: number;
     userId: any;
     poses: CharacterPose[];
+    speechBubbles?: CharacterSpeechBubble[];
 }
 
 export interface CharacterState {
@@ -40,6 +52,17 @@ export interface CharacterState {
 
 export default class Character {
     private static characterCache: CharacterData[] = [];
+
+    private static upsertCharacterData(characterData: CharacterData): CharacterData {
+        const existingIndex = this.characterCache.findIndex((char) => char.id === characterData.id);
+        if (existingIndex >= 0) {
+            this.characterCache[existingIndex] = characterData;
+        } else {
+            this.characterCache.push(characterData);
+        }
+
+        return characterData;
+    }
 
     public readonly id: number;
     public readonly name: string;
@@ -88,6 +111,29 @@ export default class Character {
         ///@ts-ignore
         const data: CharacterData[] = await response.json();
         this.characterCache = data;
+        return this.characterCache;
+    }
+
+    public static async fetchCharacterById(id: number): Promise<CharacterData | undefined> {
+        const cached = this.getCharacterData(id);
+        if (cached) {
+            return cached;
+        }
+
+        const response = await fetch(`https://objection.lol/api/assets/character/${id}`);
+        if (!response.ok) {
+            return undefined;
+        }
+
+        ///@ts-ignore
+        const characterData: CharacterData = await response.json();
+        return this.upsertCharacterData(characterData);
+    }
+
+    public static async ensureCharacterIds(ids: number[]): Promise<CharacterData[]> {
+        const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+        const resolved = await Promise.all(uniqueIds.map((id) => this.fetchCharacterById(id)));
+        return resolved.filter((entry): entry is CharacterData => Boolean(entry));
     }
 
     public addMemory(memory: string) {
@@ -127,7 +173,16 @@ export default class Character {
         return characterData.poses;
     }
 
-    public async speech(text: string, poseId?: number): Promise<void> {
+    public getPossibleSpeechBubbles(): CharacterSpeechBubble[] {
+        const characterData = Character.characterCache.find(char => char.id === this.state.characterId);
+        if (!characterData) {
+            throw new Error(`Character with ID ${this.state.characterId} not found in cache.`);
+        }
+
+        return characterData.speechBubbles ?? [];
+    }
+
+    public async speech(text: string, poseId?: number, speechBubbleId?: number): Promise<void> {
         this.state.poseId = poseId ?? this.state.poseId;
         console.log(`${this.name} (${this.id}) says: ${text}`, this.state);
         
@@ -141,7 +196,8 @@ export default class Character {
         const messageData = {
             text,
             characterId: this.state.characterId,
-            poseId: this.state.poseId
+            poseId: this.state.poseId,
+            speechBubble: speechBubbleId,
         };
         
         console.log(`[sending message] ${this.name}:`, messageData);

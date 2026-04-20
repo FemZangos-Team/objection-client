@@ -20,6 +20,8 @@ const PLAYER_USERNAME = CONFIG.playerUsername;
 const MAX_AI_MESSAGES = CONFIG.maxAiMessages; // Cap AI sequential messages to prevent long runs away from player input. Judge opening counts towards this limit.
 const INWORLD_KEY = CONFIG.inworldKey;
 const INWORLD_MODEL = CONFIG.inworldModel;
+const CUSTOM_CHARACTER_IDS = CONFIG.customCharacterIds;
+const CAST_OVERRIDES = CONFIG.castOverrides;
 const MIN_REPLY_DELAY_MS = 5000;
 const MAX_REPLY_DELAY_MS = 10000;
 
@@ -40,19 +42,120 @@ const genai = createGenAIClient({
 });
 await Character.fetchCharacterData();
 
+await Character.ensureCharacterIds([
+    ...CUSTOM_CHARACTER_IDS,
+    ...CAST_OVERRIDES.map((override) => override.characterId).filter((characterId): characterId is number => Number.isInteger(characterId)),
+]);
+
 // Track all active connections for cleanup
 const activeConnections: CourtroomWebSocketClient[] = [masterCourt];
 
-const storyManager = new StoryManager({ cooldownMs: 15000, genai });
+const storyManager = new StoryManager({ cooldownMs: 15000, genai, playerUsername: PLAYER_USERNAME });
 const caseManager = new CaseManager({ genai, storyManager });
-const defaultCasePrompt = await generateCasePrompt(genai, PROMPT);
+const defaultCasePrompt = await generateCasePrompt(genai, PROMPT, PLAYER_USERNAME);
 console.log("Generated case prompt:", defaultCasePrompt);
-const generatedProfiles = await generateTrialCharacters(genai, defaultCasePrompt);
+const generatedProfiles = applyCastOverrides(
+    await generateTrialCharacters(genai, defaultCasePrompt, PLAYER_USERNAME),
+    CAST_OVERRIDES,
+);
 console.log("Generated character profiles:", generatedProfiles);
 console.log(`\n[characters] ${generatedProfiles.length} characters generated:`);
 generatedProfiles.forEach(p => {
     console.log(`  - ${p.name} (role: ${p.role}, id: ${p.id})`);
 });
+
+interface CastOverride {
+    slotId: string;
+    role: string;
+    occurrence: number;
+    characterId?: number;
+    remove?: boolean;
+    nameOverride?: string;
+    descriptionOverride?: string;
+}
+
+function applyCastOverrides(
+    profiles: Array<Awaited<ReturnType<typeof generateTrialCharacters>>[number]>,
+    overrides: CastOverride[],
+): Array<Awaited<ReturnType<typeof generateTrialCharacters>>[number]> {
+    const occurrenceByRole = new Map<string, number>();
+    const slotMap = profiles.map((profile, index) => {
+        const role = profile.role ?? "Character";
+        const occurrence = occurrenceByRole.get(role) ?? 0;
+        occurrenceByRole.set(role, occurrence + 1);
+        return { index, role, occurrence };
+    });
+
+    const nextProfiles = [...profiles];
+
+    for (const override of overrides) {
+        const target = slotMap.find((slot) => slot.role === override.role && slot.occurrence === override.occurrence);
+        if (!target) {
+            continue;
+        }
+
+        if (override.remove) {
+            nextProfiles[target.index] = null as never;
+            continue;
+        }
+
+        const existing = nextProfiles[target.index];
+        if (!existing) {
+            continue;
+        }
+
+        const overrideCharacterId = override.characterId ?? existing.characterId;
+        const characterData = overrideCharacterId ? Character.getCharacterData(overrideCharacterId) : undefined;
+        nextProfiles[target.index] = {
+            ...existing,
+            characterId: characterData ? overrideCharacterId : existing.characterId,
+            initialPoseId: characterData?.poses?.[0]?.id ?? existing.initialPoseId,
+            name: override.nameOverride?.trim() || characterData?.name || existing.name,
+            description: override.descriptionOverride?.trim() || existing.description,
+        };
+    }
+
+    const withCustomSet = nextProfiles.filter(Boolean);
+
+    for (const characterId of CUSTOM_CHARACTER_IDS) {
+        const alreadyUsed = withCustomSet.some((profile) => profile.characterId === characterId);
+        if (alreadyUsed) {
+            continue;
+        }
+
+        const characterData = Character.getCharacterData(characterId);
+        if (!characterData) {
+            continue;
+        }
+
+        const nextId = withCustomSet.reduce((maxId, profile) => Math.max(maxId, profile.id), 0) + 1;
+
+        withCustomSet.push({
+            id: nextId,
+            name: characterData.name,
+            description: `${characterData.name} added from custom character library.`,
+            isHuman: false,
+            role: mapSideToRole(characterData.side),
+            characterId,
+            initialPoseId: characterData.poses?.[0]?.id,
+        });
+    }
+
+    return withCustomSet;
+}
+
+function mapSideToRole(side: string): "Prosecutor" | "Judge" | "Witness" | "Defendant" {
+    switch (side) {
+        case "prosecution":
+            return "Prosecutor";
+        case "judge":
+            return "Judge";
+        case "defense":
+            return "Defendant";
+        default:
+            return "Witness";
+    }
+}
 
 async function main() {
     const aiCharacters = generatedProfiles.map((profile) => ({
@@ -140,7 +243,11 @@ async function main() {
         // Refresh room roster so userId -> username map is populated for incoming messages.
         masterCourt.getRoom();
 
-        startRepl();
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+            startRepl();
+        } else {
+            console.log("REPL disabled: no interactive TTY available.");
+        }
     });
 }
 
@@ -257,16 +364,24 @@ function buildMentionReplyPrompt(
     state: CaseState,
     characterName: string,
 ): string {
+    const roleLookup = new Map(
+        state.characters.map((character) => [character.name, character.role ?? "Character"]),
+    );
+    const transcript = storyManager.buildSpeechLogTranscript(roleLookup);
     return [
-        `You are ${characterName} in an Ace Attorney style courtroom chat.`,
-        `Story prompt: ${state.storyPrompt}`,
+        `You are ${characterName} in a casual character chat with light Ace Attorney flavor.`,
+        `Conversation setup: ${state.storyPrompt}`,
+        `The defense player's name is ${speakerUsername}. Do not call them Phoenix Wright unless they explicitly used that name.`,
         state.keyPoints.length ? `Key points: ${state.keyPoints.join(" | ")}` : "",
         state.evidences.length ? `Evidence in play: ${state.evidences.map((item) => item.name).join(", ")}` : "",
+        transcript ? `Recent transcript:\n${transcript}` : "",
         `${speakerUsername} directly addressed ${characterName}.`,
         `Latest human message: "${latestMessage}"`,
         "Respond directly to what they said instead of continuing a monologue.",
-        "Keep it conversational, in-character, and concise. Max 35 words.",
-        "If they asked a question, answer it. If they challenged you, react to that challenge.",
+        "Use the ongoing conversation context. If available, remember at least the last 15 messages rather than only the latest line.",
+        "Keep it casual, in-character, and concise. Max 35 words.",
+        "If they asked a question, answer it. If they teased or challenged you, react naturally rather than turning it into courtroom roleplay.",
+        "NO EMOJIS.",
     ].filter(Boolean).join("\n");
 }
 
@@ -460,6 +575,7 @@ async function startJudgeOpening(state: CaseState): Promise<void> {
     const prompt = [
         "Give a one-line opening to start the trial and ask if the defense and prosecution are ready.",
         `Story prompt: ${state.storyPrompt}`,
+        `The defense player's name is ${PLAYER_USERNAME}.`,
         state.keyPoints.length ? `Key points: ${state.keyPoints.join(" | ")}` : "",
         "Tone: Judge declaring the session open briefly describing the case. <= 50 words.",
     ].filter(Boolean).join("\n");

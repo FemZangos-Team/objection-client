@@ -1,7 +1,7 @@
 import type { GenAIClient, JsonSchema } from "./genai-client";
 import type CourtroomWebSocketClient from "../api/courtroom-websocket-client";
 import type { SpeechDraft } from "./story-manager";
-import Character from "../core/Character";
+import Character, { type CharacterSpeechBubble } from "../core/Character";
 
 export interface CharacterSpeech {
   text: string;
@@ -9,6 +9,7 @@ export interface CharacterSpeech {
 }
 
 function buildSpeechSchema(character: Character): JsonSchema {
+  const speechBubbles = character.getPossibleSpeechBubbles();
   return {
     type: "object",
     required: ["text", "playerTurn", "scene"],
@@ -24,8 +25,16 @@ function buildSpeechSchema(character: Character): JsonSchema {
           emotion: { type: "string", enum: ["neutral", "happy", "sad", "angry", "surprised", "nervous"] },
           poseId: {
             type: "string",
-            enum: character.getPossiblePoses().map((pose) => ''+pose.id),
+            enum: character.getPossiblePoses().map((pose) => '' + pose.id),
           },
+          ...(speechBubbles.length > 0
+            ? {
+              speechBubbleId: {
+                type: "string",
+                enum: speechBubbles.map((bubble) => '' + bubble.id),
+              },
+            }
+            : {}),
         },
       },
       memory: {
@@ -55,6 +64,7 @@ export interface CharacterProfile {
 }
 
 type CharacterMood = "neutral" | "happy" | "sad" | "angry" | "surprised" | "nervous";
+const CHARACTER_CONTEXT_LIMIT = 15;
 
 export class CharacterManager {
   readonly id: number;
@@ -97,15 +107,15 @@ export class CharacterManager {
     this.speeches.push({ text, timestamp });
   }
 
-  getRecentSpeech(limit: number = 5): CharacterSpeech[] {
+  getRecentSpeech(limit: number = CHARACTER_CONTEXT_LIMIT): CharacterSpeech[] {
     return this.speeches.slice(-limit);
   }
 
-  getMemory(limit: number = 10): CharacterMemory[] {
+  getMemory(limit: number = CHARACTER_CONTEXT_LIMIT): CharacterMemory[] {
     return this.memory.slice(-limit);
   }
 
-  buildContext(limit: number = 5): string {
+  buildContext(limit: number = CHARACTER_CONTEXT_LIMIT): string {
     const recentSpeech = this.getRecentSpeech(limit)
       .map((speech) => `- ${speech.text}`)
       .join("\n");
@@ -138,12 +148,15 @@ export class CharacterManager {
       return { text: "" };
     }
 
-    const fullPrompt = `${this.buildContext()}\n\nPrompt:\n${prompt}\n\nReturn JSON only (no markdown) with: text (Character speech), scene (object with optional action, emotion, poseId), memory (array of short strings to remember), playerTurn, continueSpeech (boolean - set true if YOU want to speak again immediately after this message, If witness is being cross-examined, set to true so it can explain in detail). If you pick a poseId, use one from the available list. Keep memory entries concise (<=12 words) and only add when needed.`;
+    const fullPrompt = `${this.buildContext()}\n\nPrompt:\n${prompt}\n\nSpeak like a real person in a casual live chat with strong character flavor. Keep it direct, reactive, and natural. Prefer short replies, playful jabs, defensiveness, teasing, confusion, curiosity, or quick clarifications over dramatic courtroom monologues. Do not roleplay a formal legal proceeding unless the latest message clearly pushes in that direction. Remember and use the recent conversation context, not just the latest line. Use at least the last 15 relevant messages when responding if they are available. NO EMOJIS.\n\nReturn JSON only (no markdown) with: text (Character speech), scene (object with optional action, emotion, poseId, speechBubbleId), memory (array of short strings to remember), playerTurn, continueSpeech (boolean - set true if YOU want to speak again immediately after this message only when you have an immediate follow-up). If you pick a poseId or speechBubbleId, use one from the available list. Keep memory entries concise (<=12 words) and only add when needed.`;
 
     const schema = buildSpeechSchema(this.character);
     const response = await genai.generateJson<SpeechDraft>(fullPrompt, schema);
 
     response!.scene!.poseId = parseInt(response.scene?.poseId as unknown as string) || this.character.getCurrentPoseId() || this.pickDefaultPoseId();
+    if (response.scene?.speechBubbleId !== undefined) {
+      response.scene.speechBubbleId = parseInt(response.scene.speechBubbleId as unknown as string) || undefined;
+    }
     return {
       text: response.text?.trim() ?? "",
       scene: response.scene,
@@ -193,8 +206,9 @@ export class CharacterManager {
     draft.memory?.forEach((entry) => this.addMemory(entry));
 
     const poseId = character.getCurrentPoseId() ?? this.pickDefaultPoseId();
+    const speechBubbleId = this.resolveSpeechBubbleId(draft);
 
-    await character.speech(draft.text, poseId);
+    await character.speech(draft.text, poseId, speechBubbleId);
   }
 
   addMemory(entry: string, timestamp: number = Date.now()): void {
@@ -229,6 +243,42 @@ export class CharacterManager {
   private pickDefaultPoseId(): number {
     const data = Character.getCharacterData(this.characterId);
     return this.poseId ?? data?.poses?.[0]?.id ?? 0;
+  }
+
+  private resolveSpeechBubbleId(draft: SpeechDraft): number | undefined {
+    const bubbles = this.character?.getPossibleSpeechBubbles() ?? [];
+    if (!bubbles.length) {
+      return undefined;
+    }
+
+    const requested = draft.scene?.speechBubbleId;
+    if (requested && bubbles.some((bubble) => bubble.id === requested)) {
+      return requested;
+    }
+
+    return this.pickSpeechBubbleByHeuristic(draft.text, draft.scene?.emotion, bubbles);
+  }
+
+  private pickSpeechBubbleByHeuristic(
+    text: string,
+    emotion: CharacterMood | undefined,
+    bubbles: CharacterSpeechBubble[],
+  ): number | undefined {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const exclamatoryBubble = bubbles.find((bubble) => /objection|hold it|take that|hey|wait/i.test(bubble.name));
+    if (/[!?]{1,}$/.test(trimmed) || emotion === "angry" || emotion === "surprised") {
+      return exclamatoryBubble?.id ?? bubbles.find((bubble) => bubble.fullscreen || bubble.shake)?.id;
+    }
+
+    if (trimmed.endsWith("?")) {
+      return bubbles.find((bubble) => /question|huh|what/i.test(bubble.name))?.id;
+    }
+
+    return undefined;
   }
 
   private ensureCharacter(): Character {
