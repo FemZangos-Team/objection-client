@@ -1,5 +1,3 @@
-import { GoogleGenAI, type Schema } from "@google/genai";
-
 export interface GenAIClient {
   model: string;
   generateJson: <T>(prompt: string, schema: JsonSchema) => Promise<T>;
@@ -8,54 +6,96 @@ export interface GenAIClient {
 export interface GenAIConfig {
   model?: string;
   apiKey: string;
+  baseUrl?: string;
   systemInstruction?: string;
 }
 
-export type JsonSchema = Schema;
+export interface JsonSchema {
+  type?: string | readonly string[];
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  required?: string[];
+  enum?: unknown[];
+  description?: string;
+  additionalProperties?: boolean;
+  minItems?: number;
+  maxItems?: number;
+  maxLength?: number;
+  [key: string]: unknown;
+}
 
 export function createGenAIClient(config: GenAIConfig): GenAIClient | null {
-  const client = new GoogleGenAI({
-    apiKey: config.apiKey,
-  });
-  const model = config.model ?? "gemini-2.5-flash";
+  if (!config.apiKey?.trim()) {
+    return null;
+  }
+
+  const model = config.model ?? "google-ai-studio/gemini-2.0-flash";
+  const baseUrl = config.baseUrl ?? "https://api.inworld.ai/v1/chat/completions";
+  const systemInstruction =
+    config.systemInstruction ??
+    "You are a JSON-only assistant. Return valid JSON that matches the provided schema. Do not use markdown fences or extra commentary.";
 
   return {
     model,
     async generateJson<T>(prompt: string, schema: JsonSchema): Promise<T> {
       console.log("[genai] request", { model, prompt, schema });
-      const response = await client.models.generateContent({
-        model,
-        config: {
-          systemInstruction: prompt,
-          responseMimeType: 'application/json',
-            responseSchema: {
-              ...schema as Record<string, unknown>,
-            },
-            responseJsonSchema: {
-                ...schema as Record<string, unknown>
-            }
+
+      const response = await fetch(baseUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${config.apiKey}`,
+          "Content-Type": "application/json",
         },
-        contents: [
-          //TODO speechlog right before prompt
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content: systemInstruction,
+            },
+            {
+              role: "user",
+              content: buildJsonPrompt(prompt, schema),
+            },
+          ],
+        }),
       });
 
-      return parseJsonOrCoerce<T>(await extractText(response), schema);
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Inworld request failed (${response.status}): ${detail}`);
+      }
+
+      const payload = (await response.json()) as InworldChatCompletionResponse;
+      return parseJsonOrCoerce<T>(extractText(payload), schema);
     },
   };
 }
 
-// Try to parse JSON, but fall back to a best-effort object (helps when the model
-// returns bare text instead of valid JSON).
+interface InworldChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+}
+
+function buildJsonPrompt(prompt: string, schema: JsonSchema): string {
+  return [
+    prompt,
+    "Return JSON only.",
+    "Schema:",
+    JSON.stringify(schema, null, 2),
+  ].join("\n\n");
+}
+
 function parseJsonOrCoerce<T>(text: string, schema: JsonSchema): T {
   const cleaned = text?.trim() ?? "";
+  const jsonCandidate = extractJsonCandidate(cleaned);
 
   try {
-    return JSON.parse(cleaned) as T;
+    return JSON.parse(jsonCandidate) as T;
   } catch (error) {
     console.warn("[genai] JSON parse failed, coercing", { error });
   }
@@ -69,25 +109,36 @@ function parseJsonOrCoerce<T>(text: string, schema: JsonSchema): T {
   return { value: cleaned } as unknown as T;
 }
 
-async function extractText(response: unknown): Promise<string> {
-  const responseObject = response as {
-    text?: string | (() => Promise<string>);
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-
-  if (typeof responseObject.text === "function") {
-    const text = await responseObject.text();
-    return text?.trim() ?? "";
+function extractJsonCandidate(text: string): string {
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch?.[1]) {
+    return fenceMatch[1].trim();
   }
 
-  if (typeof responseObject.text === "string") {
-    return responseObject.text.trim();
+  const objectStart = trimmed.indexOf("{");
+  const arrayStart = trimmed.indexOf("[");
+  const starts = [objectStart, arrayStart].filter((index) => index >= 0);
+  if (starts.length === 0) {
+    return trimmed;
   }
 
-  const parts = responseObject.candidates
-    ?.flatMap((candidate) => candidate.content?.parts ?? [])
-    .map((part) => part.text)
-    .filter((text): text is string => Boolean(text));
+  const start = Math.min(...starts);
+  const objectEnd = trimmed.lastIndexOf("}");
+  const arrayEnd = trimmed.lastIndexOf("]");
+  const end = Math.max(objectEnd, arrayEnd);
 
-  return parts?.join("").trim() ?? "";
+  if (end > start) {
+    return trimmed.slice(start, end + 1).trim();
+  }
+
+  return trimmed;
+}
+
+function extractText(response: InworldChatCompletionResponse): string {
+  return response.choices
+    ?.map((choice) => choice.message?.content)
+    .filter((content): content is string => Boolean(content))
+    .join("\n")
+    .trim() ?? "";
 }

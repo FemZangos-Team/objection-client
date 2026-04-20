@@ -2,7 +2,6 @@ import type { GenAIClient, JsonSchema } from "./genai-client";
 import type CourtroomWebSocketClient from "../api/courtroom-websocket-client";
 import type { SpeechDraft } from "./story-manager";
 import Character from "../core/Character";
-import { Type } from "@google/genai";
 
 export interface CharacterSpeech {
   text: string;
@@ -11,29 +10,29 @@ export interface CharacterSpeech {
 
 function buildSpeechSchema(character: Character): JsonSchema {
   return {
-    type: Type.OBJECT,
+    type: "object",
     required: ["text", "playerTurn", "scene"],
     properties: {
-      text: { type: Type.STRING, description: "The dialogue line that the character will speak" },
-      playerTurn: { type: Type.BOOLEAN, description: "Set to true if you need player (Defense) answer after this message." },
-      continueSpeech: { type: Type.BOOLEAN, description: "Set to true if you (this character) want to speak again immediately in the next message." },
+      text: { type: "string", description: "The dialogue line that the character will speak" },
+      playerTurn: { type: "boolean", description: "Set to true if you need player (Defense) answer after this message." },
+      continueSpeech: { type: "boolean", description: "Set to true if you (this character) want to speak again immediately in the next message." },
       scene: {
-        type: Type.OBJECT,
+        type: "object",
         required: ["poseId"],
         properties: {
-          action: { type: Type.STRING },
-          emotion: { type: Type.STRING, enum: ["neutral", "happy", "sad", "angry", "surprised", "nervous"] },
+          action: { type: "string" },
+          emotion: { type: "string", enum: ["neutral", "happy", "sad", "angry", "surprised", "nervous"] },
           poseId: {
-            type: Type.STRING,
+            type: "string",
             enum: character.getPossiblePoses().map((pose) => ''+pose.id),
           },
         },
       },
       memory: {
-        type: Type.ARRAY,
+        type: "array",
         description: "Short strings that the character wants to remember, for example an insult from the player or an important clue or contracdiction himself just said. Keep entries concise (<=12 words).",
-        items: { type: Type.STRING },
-        maxItems: "4"
+        items: { type: "string" },
+        maxItems: 4,
       },
     },
   };
@@ -55,6 +54,8 @@ export interface CharacterProfile {
   disguised?: boolean; // For the extra character that adds intrigue
 }
 
+type CharacterMood = "neutral" | "happy" | "sad" | "angry" | "surprised" | "nervous";
+
 export class CharacterManager {
   readonly id: number;
   readonly name: string;
@@ -68,7 +69,7 @@ export class CharacterManager {
   private speeches: CharacterSpeech[] = [];
   private socket: CourtroomWebSocketClient | null = null;
   private character: Character | null = null;
-  private mood: "neutral" | "happy" | "sad" | "angry" | "surprised" | "nervous" = "neutral";
+  private mood: CharacterMood = "neutral";
 
   constructor(profile: CharacterProfile) {
     this.id = profile.id;
@@ -205,7 +206,7 @@ export class CharacterManager {
     return this.characterId;
   }
 
-  getState(): { poseId: number; characterId: number; mood: typeof this.mood } {
+  getState(): { poseId: number; characterId: number; mood: CharacterMood } {
     return {
       poseId: this.getPose() ?? this.pickDefaultPoseId(),
       characterId: this.characterId,
@@ -238,9 +239,9 @@ export class CharacterManager {
     return this.character;
   }
 
-  private normalizeMood(value: string): typeof this.mood | null {
+  private normalizeMood(value: string): CharacterMood | null {
     const lowered = value.toLowerCase();
-    const allowed: typeof this.mood[] = ["neutral", "happy", "sad", "angry", "surprised", "nervous"];
-    return allowed.includes(lowered as typeof this.mood) ? (lowered as typeof this.mood) : null;
+    const allowed: CharacterMood[] = ["neutral", "happy", "sad", "angry", "surprised", "nervous"];
+    return allowed.includes(lowered as CharacterMood) ? (lowered as CharacterMood) : null;
   }
 }

@@ -5,13 +5,14 @@ import path from "path";
 const DEFAULTS = {
     roomId: undefined,
     roomPass: undefined,
+    inworldKey: "RjVOMjBkb0RIZHhIZ3AzZ3hPVmRVMlhCemFrakJmTnk6VVZ4SG5vY3pwMXIyUWpjVWcxNlc4VDh0N0doRUtQZmdwb25OeUZCZFRqRlByNGhXVzRKWXZJYWhGTFczOWVvNw==",
     prompt: `
     Be funny, but try to make sense. Create a never seen storyline for a murder
     case in Ace Attorney.
 `,
     playerUsername: "eduapps",
     maxAiMessages: 4,
-    geminiModel: "gemini-3-flash-preview", //gemini-2.5-flash, gemini-3-pro-preview
+    inworldModel: "xai/grok-4-1-fast-non-reasoning-latest",
 };
 
 function printHelp(): void {
@@ -24,8 +25,8 @@ Options:
   --prompt <text>         Story prompt (default: built-in prompt)
   --player-username <id>  Human player username (default: ${DEFAULTS.playerUsername})
   --max-ai-messages <n>   Max sequential AI messages (default: ${DEFAULTS.maxAiMessages})
-  --gemini-key <key>      Gemini API key
-  --gemini-model <id>     Gemini model id (default: ${DEFAULTS.geminiModel})
+    --inworld-key <key>     Inworld Basic Base64 API key
+    --inworld-model <id>    Inworld model id (default: ${DEFAULTS.inworldModel})
   -h, --help              Show this help
 
 Examples:
@@ -95,7 +96,7 @@ async function promptUser(question: string, defaultValue?: string): Promise<stri
             ? `${colors.cyan}${question}${colors.reset} ${colors.yellow}[${defaultValue}]${colors.reset}: `
             : `${colors.cyan}${question}${colors.reset}: `;
             
-        rl.question(prompt, (answer) => {
+        rl.question(prompt, (answer: string) => {
             rl.close();
             resolve(answer.trim() || defaultValue || '');
         });
@@ -137,13 +138,13 @@ async function interactiveSetup(): Promise<Record<string, string>> {
     const config: Record<string, string> = {};
     
     const presetPrompt = preset.prompt ?? DEFAULTS.prompt;
-    const presetGeminiKey = preset['gemini-key'] ?? process.env.GEMINI_KEY ?? "";
+    const presetInworldKey = preset['inworld-key'] ?? preset['gemini-key'] ?? process.env.INWORLD_API_KEY ?? process.env.GEMINI_KEY ?? DEFAULTS.inworldKey;
 
     config['room-id'] = await promptUser('Enter room ID', preset['room-id']);
     config['player-username'] = await promptUser('Enter your username', preset['player-username'] ?? DEFAULTS.playerUsername);
     config['room-pass'] = await promptUser('Enter room password (optional, press Enter to skip)', preset['room-pass'] ?? "");
-    config['gemini-key'] = await promptUser('Enter your Gemini API key', presetGeminiKey);
-    config['gemini-model'] = await promptUser('Enter Gemini model', preset['gemini-model'] ?? DEFAULTS.geminiModel);
+    config['inworld-key'] = await promptUser('Enter your Inworld Basic API key', presetInworldKey);
+    config['inworld-model'] = await promptUser('Enter Inworld model', preset['inworld-model'] ?? preset['gemini-model'] ?? DEFAULTS.inworldModel);
     config['prompt'] = await promptUser('Enter story prompt (leave blank to use preset)', presetPrompt);
     config['max-ai-messages'] = await promptUser('Max AI messages per turn', preset['max-ai-messages'] ?? DEFAULTS.maxAiMessages.toString());
 
@@ -157,12 +158,12 @@ async function interactiveSetup(): Promise<Record<string, string>> {
 // Check if any required arguments are missing
 const hasRoomId = cliArgs["room-id"];
 const hasPlayerUsername = cliArgs["player-username"];
-const hasGeminiKey = cliArgs["gemini-key"] || process.env.GEMINI_KEY;
+const hasInworldKey = cliArgs["inworld-key"] || cliArgs["gemini-key"] || process.env.INWORLD_API_KEY || process.env.GEMINI_KEY || DEFAULTS.inworldKey;
 
-let finalConfig: Record<string, string | boolean>;
+let finalConfig: Record<string, string | boolean> = {};
 
 // If no arguments provided or missing required ones, run interactive setup
-if (!hasRoomId || !hasPlayerUsername || !hasGeminiKey) {
+if (!hasRoomId || !hasPlayerUsername || !hasInworldKey) {
     if (process.argv.length <= 2) {
         // No arguments at all, run interactive setup
         finalConfig = await interactiveSetup();
@@ -171,11 +172,11 @@ if (!hasRoomId || !hasPlayerUsername || !hasGeminiKey) {
         const missingArgs: string[] = [];
         if (!hasRoomId) missingArgs.push("--room-id");
         if (!hasPlayerUsername) missingArgs.push("--player-username");
-        if (!hasGeminiKey) missingArgs.push("--gemini-key");
+        if (!hasInworldKey) missingArgs.push("--inworld-key");
         
         console.error(`\n${colors.red}${colors.bright}Missing required arguments:${colors.reset} ${missingArgs.join(", ")}\n`);
         console.log(`${colors.yellow}Tip:${colors.reset} Run without arguments for interactive setup, or use:\n`);
-        console.log(`${colors.cyan}objection-ai --room-id XXXX --player-username XXXXX --gemini-key YOUR_KEY_HERE${colors.reset}\n`);
+        console.log(`${colors.cyan}objection-ai --room-id XXXX --player-username XXXXX --inworld-key YOUR_KEY_HERE${colors.reset}\n`);
         printHelp();
         process.exit(1);
     }
@@ -189,8 +190,8 @@ const CONFIG = {
     prompt: (finalConfig.prompt as string) || DEFAULTS.prompt,
     playerUsername: (finalConfig["player-username"] as string) || DEFAULTS.playerUsername,
     maxAiMessages: Number(finalConfig["max-ai-messages"]) || DEFAULTS.maxAiMessages,
-    geminiKey: (finalConfig["gemini-key"] as string) || process.env.GEMINI_KEY,
-    geminiModel: (finalConfig["gemini-model"] as string) || DEFAULTS.geminiModel,
+    inworldKey: (finalConfig["inworld-key"] as string) || (finalConfig["gemini-key"] as string) || process.env.INWORLD_API_KEY || process.env.GEMINI_KEY || DEFAULTS.inworldKey,
+    inworldModel: (finalConfig["inworld-model"] as string) || (finalConfig["gemini-model"] as string) || DEFAULTS.inworldModel,
 };
 
 export { CONFIG, DEFAULTS };

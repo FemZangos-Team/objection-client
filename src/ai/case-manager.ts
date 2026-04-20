@@ -31,6 +31,7 @@ export interface NextBeatOptions {
   lastMsg: string;
   lastSpeakerId: number | null;
   lastSpeakerState: CharacterState | null;
+  forcedSpeakerId?: number;
   messageIndex?: number;
   messageLimit?: number;
   prompt?: string;
@@ -133,15 +134,17 @@ export class CaseManager {
       characterMemories.set(char.id, char.getMemory(5));
     });
 
-    const speaker = await this.storyManager.chooseSpeaker(options.candidates, {
-      storyPrompt: this.storyPrompt,
-      lastMsg: options.lastMsg,
-      lastSpeakerId: options.lastSpeakerId,
-      lastSpeakerName: options.lastSpeakerName ?? null,
-      lastSpeakerWantsContinue: options.lastSpeakerWantsContinue ?? false,
-      evidences: options.evidences ?? this.evidences,
-      characterMemories,
-    });
+    const speaker = options.forcedSpeakerId !== undefined
+      ? options.candidates.find((candidate) => candidate.id === options.forcedSpeakerId)
+      : await this.storyManager.chooseSpeaker(options.candidates, {
+          storyPrompt: this.storyPrompt,
+          lastMsg: options.lastMsg,
+          lastSpeakerId: options.lastSpeakerId,
+          lastSpeakerName: options.lastSpeakerName ?? null,
+          lastSpeakerWantsContinue: options.lastSpeakerWantsContinue ?? false,
+          evidences: options.evidences ?? this.evidences,
+          characterMemories,
+        });
 
     if (!speaker) {
         return { speakerId: null, text: "" };

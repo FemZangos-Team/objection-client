@@ -1,4 +1,3 @@
-import { Type } from "@google/genai";
 import type { GenAIClient, JsonSchema } from "./genai-client";
 
 const FALLBACK_PROMPT =
@@ -53,10 +52,10 @@ function appendExtra(base: string, extra: string): string {
 
 function buildSchema(): JsonSchema {
   return {
-    type: Type.OBJECT,
+    type: "object",
     required: ["prompt"],
     properties: {
-      prompt: { type: Type.STRING },
+      prompt: { type: "string" },
     },
   };
 }

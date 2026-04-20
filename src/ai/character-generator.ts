@@ -1,7 +1,6 @@
 import type { GenAIClient, JsonSchema } from "./genai-client";
 import type { CharacterProfile } from "./character-manager";
 import Character from "../core/Character";
-import { Type } from "@google/genai";
 
 interface GeneratedCharacter {
   id: number;
@@ -61,30 +60,30 @@ function buildPrompt(storyline: string): string {
 
 function buildSchema(): JsonSchema {
   return {
-    type: Type.ARRAY,
+    type: "array",
     items: {
-      type: Type.OBJECT,
+      type: "object",
       required: ["id", "name", "description", "role"],
       properties: {
-        id: { type: Type.NUMBER },
-        name: { type: Type.STRING },
+        id: { type: "number" },
+        name: { type: "string" },
         description: {
-          type: Type.STRING,
+          type: "string",
           description: "Describe the character's personality, motivations, and role, alibi (what they were doing) in the trial. Max 3 paragraphs.",
-          maxLength: "314"
+          maxLength: 314,
         },
         role: {
-          type: Type.STRING,
+          type: "string",
           enum: ["Prosecutor", "Judge", "Witness", "Defendant"],
         },
         disguised: {
-          type: Type.BOOLEAN,
+          type: "boolean",
           description: "Optional property to indicate if the character is the disguised one. Cannot be true for Prosecutor nor Judge.",
         }, // Optional property to indicate if the character is the disguised one
       },
     },
-    minItems: "5",
-    maxItems: "8",
+    minItems: 5,
+    maxItems: 8,
   };
 }
 

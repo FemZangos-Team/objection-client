@@ -68,7 +68,7 @@ export class StoryManager {
     const lines = entries.map((entry) => {
       const role = entry.speakerId
         ? roleLookup?.get(entry.speakerName) ?? "Character"
-        : "Defense";
+        : "Player";
       const state = entry.speakerState
         ? ` (poseId=${entry.speakerState.poseId}, mood=${entry.speakerState.mood})`
         : "";

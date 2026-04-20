@@ -9,7 +9,6 @@ import {
     createGenAIClient,
     generateTrialCharacters,
     generateCasePrompt,
-    generateEvidence,
 } from "./src/ai";
 import Character from "./src/core/Character";
 import { CONFIG } from "./CONFIG";
@@ -19,13 +18,16 @@ const ROOM_PASS = CONFIG.roomPass;
 const PROMPT = CONFIG.prompt;
 const PLAYER_USERNAME = CONFIG.playerUsername;
 const MAX_AI_MESSAGES = CONFIG.maxAiMessages; // Cap AI sequential messages to prevent long runs away from player input. Judge opening counts towards this limit.
-const GEMINI_KEY = CONFIG.geminiKey;
-const GEMINI_MODEL = CONFIG.geminiModel;
+const INWORLD_KEY = CONFIG.inworldKey;
+const INWORLD_MODEL = CONFIG.inworldModel;
+const MIN_REPLY_DELAY_MS = 5000;
+const MAX_REPLY_DELAY_MS = 10000;
 
 let playerId:string; //xxxx-xxxxx-xxxxx
 const aiUsernames = new Set<string>();
 const aiUserIds = new Set<string>();
-let aiWindowRunning = false;
+const userNamesById = new Map<string, string>();
+let replyQueue: Promise<void> = Promise.resolve();
 let lastSpeakerId: number | null = null;
 const readingDelayMs = 300; // after text animation, this will add a small delay to allow reading
 let lastSpeakerName: string | null = null;
@@ -33,8 +35,8 @@ let lastSpeakerName: string | null = null;
 //test:
 globalThis.masterCourt = new CourtroomWebSocketClient();
 const genai = createGenAIClient({
-    apiKey: GEMINI_KEY || "",
-    model: GEMINI_MODEL
+    apiKey: INWORLD_KEY || "",
+    model: INWORLD_MODEL,
 });
 await Character.fetchCharacterData();
 
@@ -45,9 +47,7 @@ const storyManager = new StoryManager({ cooldownMs: 15000, genai });
 const caseManager = new CaseManager({ genai, storyManager });
 const defaultCasePrompt = await generateCasePrompt(genai, PROMPT);
 console.log("Generated case prompt:", defaultCasePrompt);
-const generatedEvidence = await generateEvidence(genai, defaultCasePrompt);
-console.log("Generated evidence:", generatedEvidence);
-const generatedProfiles = await generateTrialCharacters(genai, defaultCasePrompt + "\n\nEvidence: " + generatedEvidence.map((e) => e.name).join(", "));
+const generatedProfiles = await generateTrialCharacters(genai, defaultCasePrompt);
 console.log("Generated character profiles:", generatedProfiles);
 console.log(`\n[characters] ${generatedProfiles.length} characters generated:`);
 generatedProfiles.forEach(p => {
@@ -65,7 +65,6 @@ async function main() {
     caseManager.createCase({
         storyPrompt: defaultCasePrompt,
         characters: generatedProfiles,
-        evidences: generatedEvidence,
     });
 
     const masterSocket = masterCourt.connect({
@@ -83,6 +82,10 @@ async function main() {
 
     masterCourt.onRoomUpdate((room) => {
         room.users.forEach((user) => {
+            userNamesById.set(user.id, user.username);
+            if (user.username === "MasterSocket" || aiUsernames.has(user.username)) {
+                aiUserIds.add(user.id);
+            }
             if (user.username === PLAYER_USERNAME) {
                 playerId = user.id;
             }
@@ -90,12 +93,22 @@ async function main() {
     });
 
     masterCourt.onUserJoined((data) => {
+        userNamesById.set(data.id, data.username);
+        if (data.username === "MasterSocket" || aiUsernames.has(data.username)) {
+            aiUserIds.add(data.id);
+        }
         if (data.username === PLAYER_USERNAME) {
             playerId = data.id;
         }
     });
 
     masterCourt.onUserUpdate((userId, data) => {
+        if (data?.username) {
+            userNamesById.set(userId, data.username);
+            if (data.username === "MasterSocket" || aiUsernames.has(data.username)) {
+                aiUserIds.add(userId);
+            }
+        }
         if (data?.username === PLAYER_USERNAME) {
             playerId = userId;
         }
@@ -106,18 +119,6 @@ async function main() {
     });
 
     caseManager.setMasterSocket(masterCourt);
-
-    // Post generated evidence at startup via master socket
-    generatedEvidence.forEach((item, index) => {
-        masterCourt.addEvidence({
-            evidenceId: index + 1,
-            name: item.name,
-            description: item.description ?? "",
-            iconUrl: item.url || "https://via.placeholder.com/128?text=Evidence",
-            url: item.url ?? "",
-            type: (item.type as "image" | "video") ?? "image",
-        });
-    });
 
     // Bind all AI characters to the master socket instead of creating individual connections
     aiCharacters.forEach((entry) => {
@@ -162,45 +163,202 @@ function buildReplyPrompt(message: MessageDto, state: CaseState): string {
 }
 
 async function handleIncomingPlainMessage(message: MessageDto): Promise<void> {
-    if (message.message.text?.startsWith("[master]")) {
+    const text = message.message.text?.trim() ?? "";
+    if (!text) {
+        return;
+    }
+
+    if (text.startsWith("[master]") || text.startsWith("[Characters]") || text.startsWith("[Storyline]")) {
         console.log("Ignoring master message:", message.message);
         return;
     }
 
-    if (message.userId !== playerId) {
-        console.log("Ignoring message from non-player userId:", message.userId);
+    const speakerUsername = userNamesById.get(message.userId) ?? `user:${message.userId}`;
+    if (aiUserIds.has(message.userId) || aiUsernames.has(speakerUsername) || speakerUsername === "MasterSocket") {
+        console.log("Ignoring AI/self message from:", speakerUsername, message.userId);
         return;
     }
 
-    const username = PLAYER_USERNAME;
-    console.log("Player message from", message.userId, "as", username);
+    console.log("Human message from", message.userId, "as", speakerUsername);
     lastSpeakerId = null;
+    lastSpeakerName = speakerUsername;
 
     storyManager.logSpeech(
         undefined,
-        `Phoenix Wright (player:${username})`,
-        message.message.text ?? "",
+        speakerUsername,
+        text,
     );
 
-    if (aiUsernames.has(username)) {
-        aiUserIds.add(message.userId);
+    const addressedCharacter = findAddressedCharacter(text, caseManager.getCaseState());
+    if (!addressedCharacter) {
+        console.log("No AI character mentioned in message, skipping reply.");
         return;
     }
 
-    if (aiWindowRunning) {
-        console.log("AI window is already running, ignoring message.");
+    queueAddressedReply(message, speakerUsername, addressedCharacter.id);
+}
+
+function queueAddressedReply(message: MessageDto, speakerUsername: string, characterId: number): void {
+    replyQueue = replyQueue
+        .then(async () => {
+            const delayMs = randomInt(MIN_REPLY_DELAY_MS, MAX_REPLY_DELAY_MS);
+            console.log(`[chat queue] Waiting ${delayMs}ms before replying as character ${characterId}`);
+            await delay(delayMs);
+            await respondToAddressedMessage(message, speakerUsername, characterId);
+        })
+        .catch((error) => {
+            console.error("[chat queue] Reply failed:", error);
+        });
+}
+
+async function respondToAddressedMessage(
+    message: MessageDto,
+    speakerUsername: string,
+    characterId: number,
+): Promise<void> {
+    const state = caseManager.getCaseState();
+    const character = state.characters.find((entry) => entry.id === characterId);
+    if (!character) {
         return;
     }
 
-    aiWindowRunning = true;
+    const prompt = buildMentionReplyPrompt(speakerUsername, message.message.text ?? "", state, character.name);
+    const result = await caseManager.nextBeat({
+        candidates: [
+            {
+                id: character.id,
+                username: character.name,
+                role: character.role,
+                isHuman: character.isHuman,
+            },
+        ],
+        forcedSpeakerId: character.id,
+        prompt,
+        lastMsg: message.message.text ?? "",
+        lastSpeakerId: null,
+        lastSpeakerName: speakerUsername,
+        lastSpeakerState: null,
+        evidences: state.evidences,
+    });
 
-    storyManager.beginPlayerTurn(username, MAX_AI_MESSAGES);
-    // Note: beginPlayerTurn already sets aiTurnsRemaining, no need to call openAiWindow again
-    try {
-        await runAiWindow(message);
-    } finally {
-        aiWindowRunning = false;
+    if (!result.text) {
+        return;
     }
+
+    lastSpeakerId = result.speakerId;
+    lastSpeakerName = character.name;
+    const animationDelay = result.text.length * 60;
+    await delay(readingDelayMs + animationDelay);
+}
+
+function buildMentionReplyPrompt(
+    speakerUsername: string,
+    latestMessage: string,
+    state: CaseState,
+    characterName: string,
+): string {
+    return [
+        `You are ${characterName} in an Ace Attorney style courtroom chat.`,
+        `Story prompt: ${state.storyPrompt}`,
+        state.keyPoints.length ? `Key points: ${state.keyPoints.join(" | ")}` : "",
+        state.evidences.length ? `Evidence in play: ${state.evidences.map((item) => item.name).join(", ")}` : "",
+        `${speakerUsername} directly addressed ${characterName}.`,
+        `Latest human message: "${latestMessage}"`,
+        "Respond directly to what they said instead of continuing a monologue.",
+        "Keep it conversational, in-character, and concise. Max 35 words.",
+        "If they asked a question, answer it. If they challenged you, react to that challenge.",
+    ].filter(Boolean).join("\n");
+}
+
+function findAddressedCharacter(messageText: string, state: CaseState): CaseState["characters"][number] | undefined {
+    const normalizedMessage = normalizeNameFragment(messageText);
+    const messageTokens = tokenizeNameFragment(messageText);
+    const matches = state.characters
+        .filter((character) => !character.isHuman)
+        .map((character) => buildCharacterNameMatch(character, normalizedMessage, messageTokens))
+        .filter((entry): entry is NameMatch => entry !== null)
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+
+    return matches[0]?.character;
+}
+
+function randomInt(min: number, max: number): number {
+    const lower = Math.ceil(min);
+    const upper = Math.floor(max);
+    return Math.floor(Math.random() * (upper - lower + 1)) + lower;
+}
+
+interface NameMatch {
+    character: CaseState["characters"][number];
+    index: number;
+    score: number;
+}
+
+function buildCharacterNameMatch(
+    character: CaseState["characters"][number],
+    normalizedMessage: string,
+    messageTokens: string[],
+): NameMatch | null {
+    const normalizedName = normalizeNameFragment(character.name);
+    const nameTokens = tokenizeNameFragment(character.name);
+    const fullIndex = normalizedMessage.indexOf(normalizedName);
+    if (fullIndex >= 0) {
+        return {
+            character,
+            index: fullIndex,
+            score: 1000 + normalizedName.length,
+        };
+    }
+
+    let bestTokenScore = -1;
+    let bestTokenIndex = Number.MAX_SAFE_INTEGER;
+
+    for (const messageToken of messageTokens) {
+        if (messageToken.length < 3) {
+            continue;
+        }
+
+        for (const nameToken of nameTokens) {
+            if (nameToken.length < 3) {
+                continue;
+            }
+
+            const isPrefixMatch = nameToken.startsWith(messageToken) || messageToken.startsWith(nameToken);
+            if (!isPrefixMatch) {
+                continue;
+            }
+
+            const tokenIndex = normalizedMessage.indexOf(messageToken);
+            const score = 100 + Math.min(messageToken.length, nameToken.length);
+            if (score > bestTokenScore || (score === bestTokenScore && tokenIndex < bestTokenIndex)) {
+                bestTokenScore = score;
+                bestTokenIndex = tokenIndex;
+            }
+        }
+    }
+
+    if (bestTokenScore < 0) {
+        return null;
+    }
+
+    return {
+        character,
+        index: bestTokenIndex,
+        score: bestTokenScore,
+    };
+}
+
+function normalizeNameFragment(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+function tokenizeNameFragment(value: string): string[] {
+    return normalizeNameFragment(value)
+        .split(/\s+/)
+        .filter(Boolean);
 }
 
 async function runAiWindow(latestPlayerMessage: MessageDto): Promise<void> {

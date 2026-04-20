@@ -9,4 +9,4 @@
   [![Build Status](https://github.com/EduApps-CDG/objection-ia/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/EduApps-CDG/objection-ia/actions/workflows/ci.yml)
 </div>
 
-This is a currently WIP courtroom client for Objection.lol designed for chatting or roleplaying. It allows you to create fake users that uses AI LLMs.
+This is a currently WIP courtroom client for Objection.lol designed for chatting or roleplaying. It allows you to create fake users that use AI LLMs.

@@ -1,6 +1,5 @@
 import type { GenAIClient, JsonSchema } from "./genai-client";
 import type { EvidenceItem } from "./case-manager";
-import { Type } from "@google/genai";
 
 const FALLBACK_EVIDENCE: EvidenceItem[] = [
   {
@@ -51,19 +50,19 @@ function buildPrompt(extraText: string): string {
 
 function buildSchema(): JsonSchema {
   return {
-    type: Type.ARRAY,
+    type: "array",
     items: {
-      type: Type.OBJECT,
+      type: "object",
       required: ["id", "name", "description", "type", "url"],
       properties: {
-        id: { type: Type.STRING },
-        name: { type: Type.STRING },
-        description: { type: Type.STRING, description: "Describe the piece of evidence. What is it? Where it was found? Do not post advices, storylines or instructions for the player. Max 2 short paragraphs." },
-        type: { type: Type.STRING, enum: ["image", "video"] },
-        url: { type: Type.STRING },
+        id: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string", description: "Describe the piece of evidence. What is it? Where it was found? Do not post advices, storylines or instructions for the player. Max 2 short paragraphs." },
+        type: { type: "string", enum: ["image", "video"] },
+        url: { type: "string" },
       },
     },
-    minItems: "4",
-    maxItems: "8",
+    minItems: 4,
+    maxItems: 8,
   };
 }
