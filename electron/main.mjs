@@ -87,6 +87,7 @@ function buildCliArgs(config) {
     ["--max-ai-messages", String(config.maxAiMessages ?? DEFAULTS.maxAiMessages)],
     ["--inworld-key", config.inworldKey],
     ["--inworld-model", config.inworldModel],
+    ["--inworld-base-url", config.inworldBaseUrl],
   ];
 
   for (const [flag, value] of pairs) {

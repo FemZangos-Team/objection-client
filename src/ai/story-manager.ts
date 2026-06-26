@@ -17,12 +17,21 @@ export interface SceneSuggestion {
   memory?: string[];
 }
 
+export interface PairAction {
+  /** "pair" to pair this character with another, "unpair" to break current pair */
+  action: "pair" | "unpair";
+  /** Name of the character to pair with (only for action: "pair") */
+  targetCharacterName?: string;
+}
+
 export interface SpeechDraft {
   text: string;
   scene?: SceneSuggestion;
   playerTurn?: boolean;
   memory?: string[];
   continueSpeech?: boolean;
+  /** Optional pairing action the AI can request */
+  pairAction?: PairAction;
 }
 
 export interface StoryManagerOptions {
@@ -48,6 +57,17 @@ export class StoryManager {
     this.cooldownMs = options.cooldownMs ?? 15000;
     this.playerUsername = options.playerUsername ?? "eduapps";
     this.genai = options.genai ?? null;
+  }
+
+  /**
+   * Reset the story manager: clear speech log, key points, and force player turn.
+   */
+  public reset(): void {
+    this.speechLog = [];
+    this.keyPoints = [];
+    this.keyPointIndex = 0;
+    this.lastSpokenAt.clear();
+    this.forcePlayerTurn();
   }
 
   public getRecentMessages(limit: number = StoryManager.transcriptWindow): Array<{ speakerId?: number; speakerName: string; speakerState?:CharacterState; text: string; }> {
@@ -221,7 +241,7 @@ export class StoryManager {
     const transcriptBlock = transcript ? `Recent transcript:\n${transcript}` : "";
 
     const prompt = [
-      `Conversation setup: ${context.storyPrompt ?? "casual character chat with light Ace Attorney flavor"}`,
+      `Conversation setup: ${context.storyPrompt ?? "casual character chat"}`,
       context.evidences?.length ? `Evidence: ${context.evidences.map((e) => e.name).join(", ")}` : "",
       context.lastSpeakerName ? `Last speaker: ${context.lastSpeakerName}` : "",
       `Last message: "${context.lastMsg ?? ""}"`,
@@ -229,6 +249,8 @@ export class StoryManager {
       "\nWho should speak next to keep the conversation lively and natural?",
       "Prefer the character with the strongest reason to answer, react, joke, challenge, deflect, interrupt, or escalate based on the latest line and recent transcript.",
       "Consider: conversational momentum, direct address, tension, personality contrast, and character memories.",
+      "Do not mention Ace Attorney canon characters unless a human explicitly brings them up.",
+      "Do not use emdashes.",
       "NO EMOJIS.",
       "set speakerId to the id of the chosen character, or null to skip and let player speak. Briefly explain your choice in the reason field.",
       `\nAvailable characters:\n${characterDetails}`

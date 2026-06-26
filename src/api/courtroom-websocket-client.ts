@@ -159,12 +159,14 @@ export default class CourtroomWebSocketClient {
   }
 
   /**
-   * Join a room as a user
+   * Join a room as a user.
+   * @param extraOptions Optional extra socket options (e.g. `{ forceNew: true }` to bypass connection multiplexing)
    */
   joinRoom(
     roomId: string,
     username: string,
     password?: string,
+    extraOptions?: Partial<CourtroomSocketOptions>,
   ): CourtroomSocket {
     return this.connect({
       query: {
@@ -172,6 +174,7 @@ export default class CourtroomWebSocketClient {
         username,
         password,
       },
+      ...extraOptions,
     });
   }
 

@@ -50,6 +50,7 @@ interface BotConfig {
   maxAiMessages: number;
   inworldKey: string;
   inworldModel: string;
+  inworldBaseUrl: string;
   customCharacterIds: number[];
   castOverrides: CastOverride[];
 }
@@ -131,6 +132,7 @@ function buildDefaultConfig(defaults: DesktopBotConfig, stored: Partial<BotConfi
     maxAiMessages: stored.maxAiMessages ?? defaults.maxAiMessages,
     inworldKey: stored.inworldKey ?? defaults.inworldKey,
     inworldModel: stored.inworldModel ?? defaults.inworldModel,
+    inworldBaseUrl: stored.inworldBaseUrl ?? defaults.inworldBaseUrl,
     customCharacterIds: stored.customCharacterIds ?? defaults.customCharacterIds ?? [],
     castOverrides: sanitizeCastOverrides((stored.castOverrides as RawCastOverride[] | undefined) ?? defaults.castOverrides),
   };
@@ -385,11 +387,14 @@ export default function App() {
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField fullWidth type="number" label="Max AI messages" value={String(config.maxAiMessages)} onChange={handleTextField("maxAiMessages")} />
                 </Grid>
-                <Grid size={{ xs: 12, md: 8 }}>
+                <Grid size={{ xs: 12, md: 6 }}>
                   <TextField fullWidth label="Inworld Basic API Key" type="password" value={config.inworldKey} onChange={handleTextField("inworldKey")} />
                 </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField fullWidth label="AI API Base URL" value={config.inworldBaseUrl} onChange={handleTextField("inworldBaseUrl")} helperText="The base URL for the AI chat completion API." />
+                </Grid>
                 <Grid size={{ xs: 12 }}>
-                  <TextField fullWidth multiline minRows={5} label="Story Prompt" value={config.prompt} onChange={handleTextField("prompt")} />
+                  <TextField fullWidth multiline minRows={5} label="Additional Prompt" value={config.prompt} onChange={handleTextField("prompt")} />
                 </Grid>
               </Grid>
             ) : null}

@@ -17,6 +17,7 @@ interface DesktopBotConfig {
   maxAiMessages: number;
   inworldKey: string;
   inworldModel: string;
+  inworldBaseUrl: string;
   customCharacterIds: number[];
   castOverrides: Array<{
     slotId: string;

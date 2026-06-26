@@ -9,6 +9,7 @@ export const DEFAULTS = Object.freeze({
   playerUsername: "eduapps",
   maxAiMessages: 4,
   inworldModel: "xai/grok-4-1-fast-non-reasoning-latest",
+  inworldBaseUrl: "http://127.0.0.1:4315/v1",
   customCharacterIds: [],
   castOverrides: [],
 });

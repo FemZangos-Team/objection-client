@@ -28,6 +28,7 @@ Options:
   --max-ai-messages <n>   Max sequential AI messages (default: ${DEFAULTS.maxAiMessages})
     --inworld-key <key>     Inworld Basic Base64 API key
     --inworld-model <id>    Inworld model id (default: ${DEFAULTS.inworldModel})
+    --inworld-base-url <url>  AI API base URL (default: ${DEFAULTS.inworldBaseUrl})
   -h, --help              Show this help
 
 Examples:
@@ -193,6 +194,7 @@ const CONFIG = {
     maxAiMessages: Number(finalConfig["max-ai-messages"]) || DEFAULTS.maxAiMessages,
     inworldKey: (finalConfig["inworld-key"] as string) || (finalConfig["gemini-key"] as string) || process.env.INWORLD_API_KEY || process.env.GEMINI_KEY || DEFAULTS.inworldKey,
     inworldModel: (finalConfig["inworld-model"] as string) || (finalConfig["gemini-model"] as string) || DEFAULTS.inworldModel,
+    inworldBaseUrl: (finalConfig["inworld-base-url"] as string) || DEFAULTS.inworldBaseUrl,
     customCharacterIds: parseJsonEnv<number[]>(process.env.OBJECTION_CUSTOM_CHARACTER_IDS, DEFAULTS.customCharacterIds),
     castOverrides: parseJsonEnv<Array<{
         slotId: string;

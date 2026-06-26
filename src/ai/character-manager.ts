@@ -8,6 +8,15 @@ export interface CharacterSpeech {
   timestamp: number;
 }
 
+function sanitizeGeneratedText(text: string): string {
+  return text
+    .replace(/[\u2013\u2014]+/g, ", ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,+/g, ", ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function buildSpeechSchema(character: Character): JsonSchema {
   const speechBubbles = character.getPossibleSpeechBubbles();
   return {
@@ -17,6 +26,15 @@ function buildSpeechSchema(character: Character): JsonSchema {
       text: { type: "string", description: "The dialogue line that the character will speak" },
       playerTurn: { type: "boolean", description: "Set to true if you need player (Defense) answer after this message." },
       continueSpeech: { type: "boolean", description: "Set to true if you (this character) want to speak again immediately in the next message." },
+      pairAction: {
+        type: ["object", "null"],
+        description: "OPTIONAL: set this if you want to pair/unpair characters on screen. Only use this when the conversation naturally calls for it (e.g. pairing two characters to stand together or splitting them apart).",
+        properties: {
+          action: { type: "string", enum: ["pair", "unpair"], description: "\"pair\" to pair this character with another, \"unpair\" to break the current pair" },
+          targetCharacterName: { type: "string", description: "The name of the character to pair with (only for action: 'pair')" },
+        },
+        required: ["action"],
+      },
       scene: {
         type: "object",
         required: ["poseId"],
@@ -143,26 +161,28 @@ export class CharacterManager {
   async generateSpeech(
     prompt: string,
     genai: GenAIClient | null,
+    evidenceImageUrls?: string[],
   ): Promise<SpeechDraft> {
     if (!genai || !this.character) {
       return { text: "" };
     }
 
-    const fullPrompt = `${this.buildContext()}\n\nPrompt:\n${prompt}\n\nSpeak like a real person in a casual live chat with strong character flavor. Keep it direct, reactive, and natural. Prefer short replies, playful jabs, defensiveness, teasing, confusion, curiosity, or quick clarifications over dramatic courtroom monologues. Do not roleplay a formal legal proceeding unless the latest message clearly pushes in that direction. Remember and use the recent conversation context, not just the latest line. Use at least the last 15 relevant messages when responding if they are available. NO EMOJIS.\n\nReturn JSON only (no markdown) with: text (Character speech), scene (object with optional action, emotion, poseId, speechBubbleId), memory (array of short strings to remember), playerTurn, continueSpeech (boolean - set true if YOU want to speak again immediately after this message only when you have an immediate follow-up). If you pick a poseId or speechBubbleId, use one from the available list. Keep memory entries concise (<=12 words) and only add when needed.`;
+    const fullPrompt = `${this.buildContext()}\n\nPrompt:\n${prompt}\n\nSpeak like a real person in a casual live chat with strong character flavor. Keep it direct, reactive, and natural. Prefer short replies, playful jabs, defensiveness, teasing, confusion, curiosity, or quick clarifications over dramatic courtroom monologues. Do not roleplay a formal legal proceeding unless the latest message clearly pushes in that direction. Remember and use the recent conversation context, not just the latest line. Use at least the last 15 relevant messages when responding if they are available. Do not mention Ace Attorney canon characters unless a human explicitly brings them up first. Do not use emdashes. NO EMOJIS.\n\nReturn JSON only (no markdown) with: text (Character speech), scene (object with optional action, emotion, poseId, speechBubbleId), memory (array of short strings to remember), playerTurn, continueSpeech (boolean - set true if YOU want to speak again immediately after this message only when you have an immediate follow-up). If you pick a poseId or speechBubbleId, use one from the available list. Keep memory entries concise (<=12 words) and only add when needed.`;
 
     const schema = buildSpeechSchema(this.character);
-    const response = await genai.generateJson<SpeechDraft>(fullPrompt, schema);
+    const response = await genai.generateJson<SpeechDraft>(fullPrompt, schema, evidenceImageUrls);
 
     response!.scene!.poseId = parseInt(response.scene?.poseId as unknown as string) || this.character.getCurrentPoseId() || this.pickDefaultPoseId();
     if (response.scene?.speechBubbleId !== undefined) {
       response.scene.speechBubbleId = parseInt(response.scene.speechBubbleId as unknown as string) || undefined;
     }
     return {
-      text: response.text?.trim() ?? "",
+      text: sanitizeGeneratedText(response.text?.trim() ?? ""),
       scene: response.scene,
       playerTurn: response.playerTurn,
       memory: response.memory,
       continueSpeech: response.continueSpeech ?? false,
+      pairAction: response.pairAction,
     };
   }
 
@@ -209,6 +229,15 @@ export class CharacterManager {
     const speechBubbleId = this.resolveSpeechBubbleId(draft);
 
     await character.speech(draft.text, poseId, speechBubbleId);
+  }
+
+  /**
+   * Clear all memory entries and speech history for this character.
+   */
+  public clearAllMemory(): void {
+    this.memory = [];
+    this.speeches = [];
+    this.character?.clearAllMemory?.();
   }
 
   addMemory(entry: string, timestamp: number = Date.now()): void {

@@ -1,6 +1,6 @@
 export interface GenAIClient {
   model: string;
-  generateJson: <T>(prompt: string, schema: JsonSchema) => Promise<T>;
+  generateJson: <T>(prompt: string, schema: JsonSchema, imageUrls?: string[]) => Promise<T>;
 }
 
 export interface GenAIConfig {
@@ -25,25 +25,42 @@ export interface JsonSchema {
 }
 
 export function createGenAIClient(config: GenAIConfig): GenAIClient | null {
-  if (!config.apiKey?.trim()) {
-    return null;
+  const apiKey = config.apiKey?.trim() ?? "";
+  if (!apiKey) {
+    console.log("[genai] No API key configured — operating without authentication (local/dev mode)");
   }
 
   const model = config.model ?? "google-ai-studio/gemini-2.0-flash";
-  const baseUrl = config.baseUrl ?? "https://api.inworld.ai/v1/chat/completions";
+  const rawBaseUrl = config.baseUrl ?? "https://api.inworld.ai/v1/chat/completions";
+  // Normalize to always point at the chat completions endpoint
+  const baseUrl = rawBaseUrl.endsWith("/chat/completions")
+    ? rawBaseUrl
+    : `${rawBaseUrl.replace(/\/+$/, "")}/chat/completions`;
   const systemInstruction =
     config.systemInstruction ??
     "You are a JSON-only assistant. Return valid JSON that matches the provided schema. Do not use markdown fences or extra commentary.";
 
   return {
     model,
-    async generateJson<T>(prompt: string, schema: JsonSchema): Promise<T> {
-      console.log("[genai] request", { model, prompt, schema });
+    async generateJson<T>(prompt: string, schema: JsonSchema, imageUrls?: string[]): Promise<T> {
+      const hasVision = imageUrls && imageUrls.length > 0 && imageUrls.some(Boolean);
+      console.log("[genai] request", { model, hasVision, prompt, schema: Object.keys(schema) });
+
+      // Build user message content — plain string or array with images
+      const userContent = hasVision
+        ? [
+            { type: "text", text: buildJsonPrompt(prompt, schema) },
+            ...imageUrls!.filter(Boolean).map((url) => ({
+              type: "image_url" as const,
+              image_url: { url, detail: "auto" as const },
+            })),
+          ]
+        : buildJsonPrompt(prompt, schema);
 
       const response = await fetch(baseUrl, {
         method: "POST",
         headers: {
-          Authorization: `Basic ${config.apiKey}`,
+          ...(apiKey ? { Authorization: `Basic ${apiKey}` } : {}),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -56,7 +73,7 @@ export function createGenAIClient(config: GenAIConfig): GenAIClient | null {
             },
             {
               role: "user",
-              content: buildJsonPrompt(prompt, schema),
+              content: userContent,
             },
           ],
         }),
@@ -64,7 +81,7 @@ export function createGenAIClient(config: GenAIConfig): GenAIClient | null {
 
       if (!response.ok) {
         const detail = await response.text();
-        throw new Error(`Inworld request failed (${response.status}): ${detail}`);
+        throw new Error(`Chat completion request failed (${response.status}): ${detail}`);
       }
 
       const payload = (await response.json()) as InworldChatCompletionResponse;

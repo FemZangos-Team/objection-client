@@ -16,11 +16,11 @@
     "wait-on": "^8.0.5"
   },
   "scripts": {
-    "start": "bun run ./index.ts",
+    "start": "concurrently --kill-others-on-fail \"vite --config gui/vite.config.mjs\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs\"",
     "build": "bun run build:lin_x86 && bun run build:win",
     "build:lin_x86": "bun build ./index.ts --compile --target=bun-linux-x64-baseline --outfile objection-ai",
     "build:win": "bun build ./index.ts --compile --target=bun-windows-x64-baseline --outfile objection-ai",
-    "desktop:dev": "concurrently -k \"vite --config gui/vite.config.mjs\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs\"",
+    "desktop:dev": "concurrently --kill-others-on-fail \"vite --config gui/vite.config.mjs\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs\"",
     "desktop:build": "vite build --config gui/vite.config.mjs",
     "desktop:start": "electron electron/main.mjs",
     "typecheck": "./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/tsc -p gui/tsconfig.json --noEmit"

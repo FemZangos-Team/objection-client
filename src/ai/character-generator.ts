@@ -43,17 +43,19 @@ export async function generateTrialCharacters(
 
 function buildPrompt(storyline: string, defenseName: string): string {
   return [
-    "Generate characters for a live casual conversation with light Ace Attorney flavor. Required roles:\n",
-    "1. Prosecutor: Name MUST be 'Miles Edgeworth' (characterId 2)\n",
+    "Generate characters for a live casual conversation. Required roles:\n",
+    "1. Prosecutor: create an original prosecutor persona using prosecution preset 2\n",
     "2. Judge: (characterId 10)\n",
     "3-4. At least TWO witnesses with ' - Wt' suffix (use different witness characterIds from the list below)\n",
     "5. Defendant with ' - Df' suffix (use a witness characterId)\n",
     "Optional: One extra character (witness or defendant) who is secretly disguised/suspicious to add intrigue.\n",
     "\nIMPORTANT: Every non-player character should have a distinct speaking style, opinion, and reason to keep replying in conversation.",
     "Give them hooks for banter, defensiveness, gossip, teasing, awkwardness, rumors, interruptions, or suspicion instead of just dry testimony.",
+    "Do not mention Ace Attorney canon characters unless a human explicitly asks for them.\n",
+    "Do not use emdashes.\n",
     "NO EMOJIS.\n",
     `\nDO NOT generate character for player (Defense Attorney, ${defenseName}).\n`,
-    "Tone: casual and chatty first, with only light Ace Attorney flavor.\n",
+    "Tone: casual and chatty.\n",
     "Possible witness/defendant characterIds: " + Character.getPossibleWitnessIds().slice(0, 20).join(", ") + "... (assign unique IDs, no repeats)\n\n",
     
     "Conversation setup: " +
@@ -94,7 +96,7 @@ function getFallbackCharacters(): CharacterProfile[] {
   return [
     {
       id: 2,
-      name: "Miles Edgeworth",
+      name: "Prosecutor",
       description: "Sharply analytical prosecutor AI.",
       isHuman: false,
       role: "Prosecutor",

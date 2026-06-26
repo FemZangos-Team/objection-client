@@ -106,7 +106,6 @@ export default class Character {
             return this.characterCache;
         }
 
-        //https://objection.lol/api/assets/character/getPreset
         const response = await fetch("https://objection.lol/api/assets/character/getPreset");
         ///@ts-ignore
         const data: CharacterData[] = await response.json();
@@ -134,6 +133,10 @@ export default class Character {
         const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
         const resolved = await Promise.all(uniqueIds.map((id) => this.fetchCharacterById(id)));
         return resolved.filter((entry): entry is CharacterData => Boolean(entry));
+    }
+
+    public clearAllMemory(): void {
+        this.memory = [];
     }
 
     public addMemory(memory: string) {
