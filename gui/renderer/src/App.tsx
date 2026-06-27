@@ -33,13 +33,19 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 
 type BotLevel = "info" | "error" | "system";
-type AppTab = "hoster" | "custom-characters" | "manage-cast";
+type AppTab = "hoster" | "custom-characters" | "manage-cast" | "mafia";
 type CastRole = "Prosecutor" | "Judge" | "Witness" | "Defendant";
 
 interface BotLog {
   id: number;
   level: BotLevel;
   message: string;
+}
+
+interface MafiaPlayer {
+  name: string;
+  role: string;
+  characterId?: number;
 }
 
 interface BotConfig {
@@ -53,6 +59,8 @@ interface BotConfig {
   inworldBaseUrl: string;
   customCharacterIds: number[];
   castOverrides: CastOverride[];
+  mafiaMode: boolean;
+  mafiaPlayers: MafiaPlayer[];
 }
 
 interface CastOverride {
@@ -113,7 +121,7 @@ function sanitizeCastOverrides(overrides: RawCastOverride[] | undefined): CastOv
 
     return [{
       slotId: entry.slotId,
-      role,
+      role: role as CastRole,
       occurrence: entry.occurrence,
       characterId: typeof entry.characterId === "number" ? entry.characterId : undefined,
       remove: Boolean(entry.remove),
@@ -135,6 +143,8 @@ function buildDefaultConfig(defaults: DesktopBotConfig, stored: Partial<BotConfi
     inworldBaseUrl: stored.inworldBaseUrl ?? defaults.inworldBaseUrl,
     customCharacterIds: stored.customCharacterIds ?? defaults.customCharacterIds ?? [],
     castOverrides: sanitizeCastOverrides((stored.castOverrides as RawCastOverride[] | undefined) ?? defaults.castOverrides),
+    mafiaMode: stored.mafiaMode ?? defaults.mafiaMode ?? false,
+    mafiaPlayers: stored.mafiaPlayers ?? defaults.mafiaPlayers ?? [],
   };
 }
 
@@ -301,12 +311,12 @@ export default function App() {
   }
 
   async function handleReplacementCharacterIdChange(slot: CastSlotDefinition, value: string) {
-    const characterId = value ? Number(value) : undefined;
     if (!value) {
       updateSlot(slot, (current) => ({ ...current, characterId: undefined }));
       return;
     }
 
+    const characterId = Number(value);
     if (!Number.isInteger(characterId)) {
       return;
     }
@@ -350,6 +360,7 @@ export default function App() {
             <Tab value="hoster" label="Hoster" />
             <Tab value="custom-characters" label="Custom characters" />
             <Tab value="manage-cast" label="Manage cast" />
+            <Tab value="mafia" label="Mafia" />
           </Tabs>
           <Stack direction="row" spacing={1}>
             <IconButton color="inherit"><PublicRoundedIcon /></IconButton>
@@ -529,6 +540,98 @@ export default function App() {
                     </Paper>
                   );
                 })}
+              </Stack>
+            ) : null}
+
+            {tab === "mafia" ? (
+              <Stack spacing={3}>
+                <Alert severity={config.mafiaMode ? "success" : "info"}>
+                  {config.mafiaMode
+                    ? "Mafia mode is ON. The bot will run as a Mafia party game where you are the Game Master and the AI characters are players with secret roles."
+                    : "Enable Mafia mode to turn the bot into a Mafia party game host. You act as Game Master, creating roles and narrating the story."
+                  }
+                </Alert>
+
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={config.mafiaMode}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => updateField("mafiaMode", event.currentTarget.checked)}
+                      color="primary"
+                    />
+                  }
+                  label="Enable Mafia mode"
+                />
+
+                {config.mafiaMode ? (
+                  <Stack spacing={2}>
+                    <Typography variant="h6">Players</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Add players and assign their secret roles. The AI characters will know their role but MUST NOT reveal it. As the Game Master, you control the narrative.
+                    </Typography>
+
+                    {config.mafiaPlayers.map((player, index) => (
+                      <Paper key={index} sx={{ p: 2, border: "1px solid rgba(255,255,255,0.06)", backgroundColor: "rgba(255,255,255,0.02)" }}>
+                        <Stack spacing={2}>
+                          <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ xs: "flex-start", md: "center" }}>
+                            <Typography variant="h6" sx={{ minWidth: 40 }}>#{index + 1}</Typography>
+                            <TextField
+                              fullWidth
+                              label="Player name"
+                              value={player.name}
+                              onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                                const newPlayers = [...config.mafiaPlayers];
+                                newPlayers[index] = { ...player, name: event.currentTarget.value };
+                                updateField("mafiaPlayers", newPlayers);
+                              }}
+                              placeholder="e.g. Alice"
+                            />
+                            <TextField
+                              fullWidth
+                              label="Secret role"
+                              value={player.role}
+                              onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                                const newPlayers = [...config.mafiaPlayers];
+                                newPlayers[index] = { ...player, role: event.currentTarget.value };
+                                updateField("mafiaPlayers", newPlayers);
+                              }}
+                              placeholder="e.g. Mafia, Doctor, Detective"
+                            />
+                            <TextField
+                              type="number"
+                              label="Character preset ID (optional)"
+                              value={player.characterId ?? ""}
+                              onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+                                const value = event.currentTarget.value;
+                                const newPlayers = [...config.mafiaPlayers];
+                                newPlayers[index] = { ...player, characterId: value ? Number(value) : undefined };
+                                updateField("mafiaPlayers", newPlayers);
+                              }}
+                              sx={{ minWidth: 200 }}
+                            />
+                            <IconButton color="error" onClick={() => {
+                              const newPlayers = config.mafiaPlayers.filter((_, i) => i !== index);
+                              updateField("mafiaPlayers", newPlayers);
+                            }}>
+                              <DeleteOutlineRoundedIcon />
+                            </IconButton>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))}
+
+                    <Button
+                      variant="outlined"
+                      startIcon={<AddRoundedIcon />}
+                      onClick={() => {
+                        updateField("mafiaPlayers", [...config.mafiaPlayers, { name: "", role: "" }]);
+                      }}
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      Add player
+                    </Button>
+                  </Stack>
+                ) : null}
               </Stack>
             ) : null}
 

@@ -28,9 +28,10 @@ Install bun and run `bun install`, then run `bun start` to open the interface. i
 
 ## Available Commands
 - !exit - quits the courtroom
-- !pair - currently broken, but it was meant to pair with another user in the courtroom
 - !aibanter - makes AI talk to each other.
-- !unpair - unpairs the AI from the other character.
+- !time <timeofday> - sets the time of day in the courtroom.
+- !scene <description> - Sets a scene context (e.g.  !scene the prosecutor presents a surprise witness )
+- !keypoint <point> - Adds a key point to the conversation memory (e.g.  !keypoint the witness is lying )
 
 ## Contributing
 If you want to contribute, please fork the repository and create a pull request.

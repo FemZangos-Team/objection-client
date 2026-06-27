@@ -12,4 +12,6 @@ export const DEFAULTS = Object.freeze({
   inworldBaseUrl: "http://127.0.0.1:4315/v1",
   customCharacterIds: [],
   castOverrides: [],
+  mafiaMode: false,
+  mafiaPlayers: [],
 });

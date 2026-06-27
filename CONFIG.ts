@@ -205,6 +205,12 @@ const CONFIG = {
         nameOverride?: string;
         descriptionOverride?: string;
     }>>(process.env.OBJECTION_CAST_OVERRIDES, DEFAULTS.castOverrides),
+    mafiaMode: parseJsonEnv<boolean>(process.env.OBJECTION_MAFIA_MODE, DEFAULTS.mafiaMode),
+    mafiaPlayers: parseJsonEnv<Array<{
+        name: string;
+        role: string;
+        characterId?: number;
+    }>>(process.env.OBJECTION_MAFIA_PLAYERS, DEFAULTS.mafiaPlayers),
 };
 
 export { CONFIG, DEFAULTS };

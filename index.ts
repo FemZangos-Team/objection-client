@@ -2,10 +2,10 @@
 
 import CourtroomWebSocketClient from "./src/api/courtroom-websocket-client";
 import type { MessageDto, PlainMessageDto, RoomDto, UserDto } from "./src/api/courtroom-websocket-types";
-import { PairStatus } from "./src/api/courtroom-websocket-types";
 import {
     CaseManager,
     type CaseState,
+    type CharacterProfile,
     StoryManager,
     createGenAIClient,
     generateTrialCharacters,
@@ -23,6 +23,8 @@ const INWORLD_MODEL = CONFIG.inworldModel;
 const INWORLD_BASE_URL = CONFIG.inworldBaseUrl;
 const CUSTOM_CHARACTER_IDS = CONFIG.customCharacterIds;
 const CAST_OVERRIDES = CONFIG.castOverrides;
+const MAFIA_MODE = CONFIG.mafiaMode;
+const MAFIA_PLAYERS = CONFIG.mafiaPlayers;
 const MIN_REPLY_DELAY_MS = 5000;
 const MAX_REPLY_DELAY_MS = 10000;
 const AI_BANTER_MAX_MESSAGES = 20;
@@ -35,9 +37,6 @@ let replyQueue: Promise<void> = Promise.resolve();
 let lastSpeakerId: number | null = null;
 const readingDelayMs = 300; // after text animation, this will add a small delay to allow reading
 let lastSpeakerName: string | null = null;
-let activePairId: string | null = null;
-/** Map of character name → dedicated socket created for pairing */
-const pairSockets = new Map<string, CourtroomWebSocketClient>();
 
 //test:
 globalThis.masterCourt = new CourtroomWebSocketClient();
@@ -60,17 +59,72 @@ const storyManager = new StoryManager({ cooldownMs: 15000, genai, playerUsername
 const caseManager = new CaseManager({ genai, storyManager });
 
 // Use a minimal story prompt — characters are AI-generated, but no AI call is made for a case description
-const defaultCasePrompt = PROMPT?.trim() || "Live character conversation.";
+const mafiaPrompt = MAFIA_MODE
+    ? "Mafia party game — the Game Master narrates the story, assigns secret roles, and the players must figure out who the Mafia is.\n\n"
+      + `Players: ${MAFIA_PLAYERS.map(p => p.name).join(", ")}.\n\n`
+      + "The Game Master reveals events (who was eliminated, what happened at night, etc.) and players discuss, accuse, and vote in character. The Mafia tries to blend in. The Town tries to find them."
+    : "";
+
+const defaultCasePrompt = MAFIA_MODE
+    ? mafiaPrompt
+    : (PROMPT?.trim() || "Live character conversation.");
+
 console.log("Story prompt:", defaultCasePrompt);
-const generatedProfiles = applyCastOverrides(
-    await generateTrialCharacters(genai, defaultCasePrompt, PLAYER_USERNAME),
-    CAST_OVERRIDES,
-);
-console.log("Generated character profiles:", generatedProfiles);
+
+let generatedProfiles: Array<Awaited<ReturnType<typeof generateTrialCharacters>>[number]>;
+if (MAFIA_MODE && MAFIA_PLAYERS.length > 0) {
+    // Mafia mode: create profiles from mafiaPlayers config
+    generatedProfiles = await createMafiaProfiles();
+} else {
+    generatedProfiles = applyCastOverrides(
+        await generateTrialCharacters(genai, defaultCasePrompt, PLAYER_USERNAME),
+        CAST_OVERRIDES,
+    );
+}
+
+console.log("Character profiles:", generatedProfiles);
 console.log(`\n[characters] ${generatedProfiles.length} characters generated:`);
 generatedProfiles.forEach(p => {
     console.log(`  - ${p.name} (role: ${p.role}, id: ${p.id})`);
 });
+
+// Deduplicate character names — append " AI" suffix when two characters share the same name
+const nameCount = new Map<string, number>();
+for (let i = 0; i < generatedProfiles.length; i++) {
+    const profile = generatedProfiles[i]!;
+    const count = nameCount.get(profile.name) ?? 0;
+    nameCount.set(profile.name, count + 1);
+    if (count > 0) {
+        const newName = `${profile.name} AI`;
+        console.log(`[dedup] Renaming "${profile.name}" to "${newName}" to avoid duplicate`);
+        generatedProfiles[i] = { ...profile, name: newName } as typeof profile;
+    }
+}
+
+/** Generate character profiles for Mafia mode from mafiaPlayers config */
+async function createMafiaProfiles(): Promise<CharacterProfile[]> {
+    const profiles: CharacterProfile[] = [];
+
+    for (let i = 0; i < MAFIA_PLAYERS.length; i++) {
+        const player = MAFIA_PLAYERS[i]!;
+        const characterData = player.characterId
+            ? Character.getCharacterData(player.characterId)
+            : undefined;
+
+        profiles.push({
+            id: i + 2, // Start at 2 (1 is reserved defense player)
+            name: player.name,
+            description: `Player in a Mafia party game. ${player.role ? `Secretly assigned the role of ${player.role}.` : ''} ${characterData?.name ? `Uses character preset: ${characterData.name}.` : ''}`,
+            isHuman: false,
+            role: "Witness", // Generic role for the courtroom interface
+            characterId: characterData?.id ?? 4, // Fallback to witness preset
+            secretRole: player.role,
+            initialPoseId: characterData?.poses?.[0]?.id,
+        });
+    }
+
+    return profiles;
+}
 
 interface CastOverride {
     slotId: string;
@@ -217,7 +271,6 @@ async function main() {
         if (data.username === PLAYER_USERNAME) {
             playerId = data.id;
         }
-        syncCharacterUserId(data.username, data.id);
     });
 
     masterCourt.onUserUpdate((userId, data) => {
@@ -230,43 +283,10 @@ async function main() {
         if (data?.username === PLAYER_USERNAME) {
             playerId = userId;
         }
-        if (data?.username) {
-            syncCharacterUserId(data.username, userId);
-        }
     });
 
     masterCourt.onTyping((userId) => {
         trackTyping(userId);
-    });
-
-    // Auto-accept pair invitations on behalf of AI characters
-    masterCourt.onPairCreated((pairData) => {
-        console.log("[pair] Received pair invitation:", pairData);
-        if (pairData.id) {
-            activePairId = pairData.id;
-            masterCourt.respondToPair({ pairId: pairData.id, status: PairStatus.Accepted });
-            console.log("[pair] Auto-accepted pair:", pairData.id);
-            masterCourt.sendPlainMessage({
-                text: `[System] Characters paired successfully.`
-            });
-        }
-    });
-
-    masterCourt.onPairUpdated((pairData) => {
-        if (pairData.pairId) {
-            activePairId = pairData.pairId;
-        }
-    });
-
-    masterCourt.onPairedUserUpdated(() => {
-        // Paired user position updated, no action needed
-    });
-
-    masterCourt.onPairRemoved((pairId) => {
-        if (activePairId === pairId) {
-            activePairId = null;
-        }
-        console.log("[pair] Pair removed:", pairId);
     });
 
     caseManager.setMasterSocket(masterCourt);
@@ -314,20 +334,6 @@ function syncKnownUsers(users: UserDto[]): void {
         if (user.username === PLAYER_USERNAME) {
             playerId = user.id;
         }
-        // Sync character → userId map for pairing
-        syncCharacterUserId(user.username, user.id);
-    }
-}
-
-/**
- * Register a character's WebSocket user ID with the case manager for pairing.
- */
-function syncCharacterUserId(username: string, userId: string): void {
-    if (aiUsernames.has(username)) {
-        caseManager.setCharacterUserId(username, userId);
-    }
-    if (username === PLAYER_USERNAME) {
-        caseManager.setCharacterUserId(PLAYER_USERNAME, userId);
     }
 }
 
@@ -416,57 +422,39 @@ async function handleIncomingPlainMessage(message: MessageDto): Promise<void> {
         return;
     }
 
-    // !unpair - Remove the active pair and disconnect dedicated pair sockets
-    if (text === "!unpair") {
-        console.log("Command: !unpair - removing active pair");
-        if (pairSockets.size > 0) {
-            // Rebind all pair-socketed characters back to the master socket
-            for (const [charName, _socket] of pairSockets) {
-                const state = caseManager.getCaseState();
-                const profile = state.characters.find(
-                    (c) => c.name.toLowerCase() === charName.toLowerCase(),
-                );
-                if (profile) {
-                    caseManager.bindCharacterSocket(profile.id, masterCourt);
-                }
-            }
-            // Disconnect all pair sockets
-            for (const [charName, socket] of pairSockets) {
-                console.log(`[pair] Disconnecting dedicated socket for ${charName}`);
-                socket.disconnect();
-            }
-            pairSockets.clear();
-        }
-        if (activePairId) {
-            masterCourt.leavePair();
-            activePairId = null;
-            masterCourt.sendPlainMessage({
-                text: "[System] Characters unpaired."
-            });
-        } else {
-            masterCourt.sendPlainMessage({
-                text: "[System] No active pair to remove."
-            });
-        }
+    // !time <timeofday> - Set the current in-game time
+    const timeMatch = text.match(/^!time\s+(.+)$/i);
+    if (timeMatch) {
+        const timeOfDay = timeMatch[1]!.trim();
+        console.log("Command: !time -", timeOfDay);
+        caseManager.setCurrentTime(timeOfDay);
+        masterCourt.sendPlainMessage({
+            text: `[System] Time set to ${timeOfDay}.`
+        });
         return;
     }
 
-    // !pair <CharA> with <CharB> - Pair two characters together
-    const pairMatch = text.match(/^!pair\s+(.+?)\s+with\s+(.+)$/i);
-    if (pairMatch) {
-        console.log("Command: !pair - pairing characters");
-        const charAName = pairMatch[1]!.trim();
-        const charBName = pairMatch[2]!.trim();
-        const result = await executePairCommand(charAName, charBName);
-        if (result.success) {
-            masterCourt.sendPlainMessage({
-                text: `[System] Pairing ${result.charAName} with ${result.charBName}...`
-            });
-        } else {
-            masterCourt.sendPlainMessage({
-                text: `[System] ${result.error}`
-            });
-        }
+    // !scene <description> - Set the current scene context
+    const sceneMatch = text.match(/^!scene\s+(.+)$/i);
+    if (sceneMatch) {
+        const sceneDesc = sceneMatch[1]!.trim();
+        console.log("Command: !scene -", sceneDesc);
+        caseManager.setSceneContext(sceneDesc);
+        masterCourt.sendPlainMessage({
+            text: `[System] Scene context updated: ${sceneDesc}`
+        });
+        return;
+    }
+
+    // !keypoint <point> - Add a key point to the conversation
+    const keypointMatch = text.match(/^!keypoint\s+(.+)$/i);
+    if (keypointMatch) {
+        const point = keypointMatch[1]!.trim();
+        console.log("Command: !keypoint -", point);
+        storyManager.addKeyPoint(point);
+        masterCourt.sendPlainMessage({
+            text: `[System] Key point added: ${point}`
+        });
         return;
     }
 
@@ -953,140 +941,6 @@ function startRepl() {
     rl.on('close', () => {
         cleanup();
         process.exit(0);
-    });
-}
-
-/**
- * Try to find a WebSocket user ID for a character by name lookup.
- * First checks the userNamesById map, then checks if the name matches
- * an AI username directly. Returns null if no matching user ID is found.
- */
-function findUserIdByCharacterName(
-    characterName: string,
-    state: CaseState,
-): string | null {
-    // Check if a known user ID has this character name
-    for (const [userId, username] of userNamesById) {
-        if (username.toLowerCase() === characterName.toLowerCase()) {
-            return userId;
-        }
-    }
-
-    // Maybe this is an AI character — all AI share the socket, so return
-    // the first AI user ID we have tracked
-    if (aiUsernames.has(characterName)) {
-        return aiUserIds.values().next().value ?? null;
-    }
-
-    return null;
-}
-
-interface PairCommandResult {
-    success: boolean;
-    charAName?: string;
-    charBName?: string;
-    error?: string;
-}
-
-async function executePairCommand(charAName: string, charBName: string): Promise<PairCommandResult> {
-    const state = caseManager.getCaseState();
-
-    // Resolve characters from case state
-    const charA = state.characters.find(
-        (c) => c.name.toLowerCase() === charAName.toLowerCase(),
-    );
-    const charB = state.characters.find(
-        (c) => c.name.toLowerCase() === charBName.toLowerCase(),
-    );
-
-    if (!charA) {
-        return { success: false, error: `Character "${charAName}" not found.` };
-    }
-    if (!charB) {
-        return { success: false, error: `Character "${charBName}" not found.` };
-    }
-
-    // If a character already has a dedicated pair socket, reuse it; otherwise, create one
-    if (!pairSockets.has(charA.name)) {
-        console.log(`[pair] Creating dedicated socket for ${charA.name}`);
-        const sockA = new CourtroomWebSocketClient();
-        sockA.joinRoom(ROOM_ID || "", charA.name, ROOM_PASS);
-        pairSockets.set(charA.name, sockA);
-        activeConnections.push(sockA);
-    }
-    if (!pairSockets.has(charB.name)) {
-        console.log(`[pair] Creating dedicated socket for ${charB.name}`);
-        const sockB = new CourtroomWebSocketClient();
-        sockB.joinRoom(ROOM_ID || "", charB.name, ROOM_PASS);
-        pairSockets.set(charB.name, sockB);
-        activeConnections.push(sockB);
-    }
-
-    // Poll briefly for the characters' user IDs to appear in userNamesById
-    // (the dedicated sockets need a moment to connect and register)
-    return new Promise<PairCommandResult>((resolve) => {
-        const attempts = 20; // max 20 * 500ms = 10 seconds
-        let tries = 0;
-
-        const check = () => {
-            tries++;
-            const userIdA = findUserIdByCharacterName(charA!.name, caseManager.getCaseState());
-            const userIdB = findUserIdByCharacterName(charB!.name, caseManager.getCaseState());
-
-            if (userIdA && userIdB && userIdA !== userIdB) {
-                // Both have registered with unique IDs — rebind sockets and pair
-                console.log(`[pair] Dedicated sockets registered: ${charA!.name}=${userIdA}, ${charB!.name}=${userIdB}`);
-
-                // If a character has a dedicated socket, rebind so future speech uses it
-                const sockA = pairSockets.get(charA!.name);
-                if (sockA) {
-                    caseManager.bindCharacterSocket(charA!.id, sockA);
-                    console.log(`[pair] Rebound ${charA!.name} to dedicated socket`);
-                }
-                const sockB = pairSockets.get(charB!.name);
-                if (sockB) {
-                    caseManager.bindCharacterSocket(charB!.id, sockB);
-                    console.log(`[pair] Rebound ${charB!.name} to dedicated socket`);
-                }
-
-                try {
-                    masterCourt.createPair({ invitedUserIds: [userIdA, userIdB] });
-                    console.log(`[pair] Created pair between ${charA!.name} (${userIdA}) and ${charB!.name} (${userIdB})`);
-                    masterCourt.sendPlainMessage({
-                        text: `[System] ${charA!.name} pairs with ${charB!.name}.`
-                    });
-                    resolve({ success: true, charAName: charA!.name, charBName: charB!.name });
-                } catch (err) {
-                    console.error("[pair] createPair failed:", err);
-                    masterCourt.sendPlainMessage({
-                        text: `[System] Failed to pair ${charA!.name} with ${charB!.name}.`
-                    });
-                    resolve({ success: false, error: `createPair failed: ${(err as Error).message}` });
-                }
-                return;
-            }
-
-            if (userIdA && userIdB && userIdA === userIdB) {
-                // Both are still on the master socket (pair sockets haven't registered yet)
-                if (tries >= attempts) {
-                    console.warn(`[pair] Timed out waiting for dedicated sockets for ${charA!.name} / ${charB!.name}`);
-                    resolve({ success: false, error: `Timed out waiting for dedicated socket registration.` });
-                    return;
-                }
-                setTimeout(check, 500);
-                return;
-            }
-
-            if (tries >= attempts) {
-                console.warn(`[pair] Timed out waiting for user IDs for ${charA!.name} / ${charB!.name}`);
-                resolve({ success: false, error: `Timed out waiting for sockets to connect.` });
-                return;
-            }
-
-            setTimeout(check, 500);
-        };
-
-        setTimeout(check, 500);
     });
 }
 

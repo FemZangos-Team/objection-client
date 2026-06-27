@@ -17,21 +17,12 @@ export interface SceneSuggestion {
   memory?: string[];
 }
 
-export interface PairAction {
-  /** "pair" to pair this character with another, "unpair" to break current pair */
-  action: "pair" | "unpair";
-  /** Name of the character to pair with (only for action: "pair") */
-  targetCharacterName?: string;
-}
-
 export interface SpeechDraft {
   text: string;
   scene?: SceneSuggestion;
   playerTurn?: boolean;
   memory?: string[];
   continueSpeech?: boolean;
-  /** Optional pairing action the AI can request */
-  pairAction?: PairAction;
 }
 
 export interface StoryManagerOptions {

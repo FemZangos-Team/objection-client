@@ -28,6 +28,12 @@ interface DesktopBotConfig {
     nameOverride?: string;
     descriptionOverride?: string;
   }>;
+  mafiaMode: boolean;
+  mafiaPlayers: Array<{
+    name: string;
+    role: string;
+    characterId?: number;
+  }>;
 }
 
 interface DesktopCharacter {

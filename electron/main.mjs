@@ -145,6 +145,8 @@ ipcMain.handle("bot:start", async (_event, config) => {
       FORCE_COLOR: "1",
       OBJECTION_CUSTOM_CHARACTER_IDS: JSON.stringify(config.customCharacterIds ?? []),
       OBJECTION_CAST_OVERRIDES: JSON.stringify(config.castOverrides ?? []),
+      OBJECTION_MAFIA_MODE: JSON.stringify(config.mafiaMode ?? false),
+      OBJECTION_MAFIA_PLAYERS: JSON.stringify(config.mafiaPlayers ?? []),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
